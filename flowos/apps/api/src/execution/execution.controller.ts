@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Param } from "@nestjs/common";
+import { Body, Controller, Post, Get, Param } from "@nestjs/common";
 import { ApiTags, ApiOperation } from "@nestjs/swagger";
 import { ExecutionService } from "./execution.service";
 
@@ -23,5 +23,11 @@ export class ExecutionController {
   @ApiOperation({ summary: "Get a single run's status and node logs" })
   getRun(@Param("runId") runId: string) {
     return this.executionService.getRun(runId);
+  }
+
+  @Post("runs/:runId/resume")
+  @ApiOperation({ summary: "Resume an awaiting DISPLAY run with validated form values" })
+  resume(@Param("runId") runId: string, @Body() body: { values?: Record<string, unknown> }) {
+    return this.executionService.resumeRun(runId, body.values ?? {});
   }
 }

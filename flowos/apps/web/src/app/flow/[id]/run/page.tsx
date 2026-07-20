@@ -7,6 +7,7 @@ import { api } from "@/lib/api";
 import { getSocket } from "@/lib/socket";
 import { useFlowStore } from "@/store/flowStore";
 import { Canvas } from "@/components/Canvas";
+import { DisplayBundle } from "@/components/DisplayBundle";
 import type { NodeStatus } from "@flowos/types";
 
 interface LogEntry {
@@ -24,7 +25,9 @@ export default function RunPage() {
   const resetRunState = useFlowStore((s) => s.resetRunState);
 
   const [loading, setLoading] = useState(!flow || flow.id !== params.id);
-  const [runStatus, setRunStatus] = useState<"starting" | "running" | "completed" | "failed">("starting");
+  const [runStatus, setRunStatus] = useState<"starting" | "running" | "awaiting_input" | "completed" | "failed">("starting");
+  const [runId, setRunId] = useState<string>();
+  const [displayNodeId, setDisplayNodeId] = useState<string>();
   const [log, setLog] = useState<LogEntry[]>([]);
   const started = useRef(false);
 
@@ -50,11 +53,13 @@ export default function RunPage() {
 
     api.runFlow(flow.id).then(({ runId }) => {
       socket.emit("join_run", { runId });
+      setRunId(runId);
       setRunStatus("running");
     });
 
     const onNodeStatus = (payload: { nodeId: string; status: NodeStatus; outputs?: unknown; error?: string }) => {
       setNodeStatus(payload.nodeId, payload.status, payload.outputs);
+      if (payload.status === "awaiting_input") { setRunStatus("awaiting_input"); setDisplayNodeId(payload.nodeId); }
       setLog((prev) => [...prev, { nodeId: payload.nodeId, status: payload.status, outputs: payload.outputs, at: new Date().toLocaleTimeString() }]);
     };
     const onComplete = () => setRunStatus("completed");
@@ -109,6 +114,12 @@ export default function RunPage() {
       <div className="flex flex-1 overflow-hidden">
         <Canvas interactive={false} />
       </div>
+
+      {runStatus === "awaiting_input" && runId && displayNodeId && (
+        <div className="h-80 border-t border-slate-800 bg-white">
+          <DisplayBundle flowId={flow.id} nodeId={displayNodeId} onSubmit={async (values) => { await api.resumeRun(runId, values); setRunStatus("running"); setDisplayNodeId(undefined); }} />
+        </div>
+      )}
 
       <div className="h-40 border-t border-slate-800 overflow-y-auto px-4 py-2 bg-[#0d0d13]">
         <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Execution log</div>

@@ -19,6 +19,7 @@ const NODE_STATUS_STYLE: Record<NodeStatus, string> = {
   running: "text-amber-400",
   success: "text-emerald-400",
   error: "text-red-400",
+  awaiting_input: "text-violet-400",
 };
 
 function duration(run: FlowRun): string {

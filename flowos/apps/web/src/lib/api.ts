@@ -44,11 +44,13 @@ export const api = {
   deleteFlow: (id: string) => request<{ deleted: true; id: string }>(`/flows/${id}`, { method: "DELETE" }),
 
   runFlow: (id: string) => request<{ runId: string }>(`/flows/${id}/run`, { method: "POST" }),
+  resumeRun: (runId: string, values: Record<string, unknown>) => request<{ runId: string }>(`/flows/runs/${runId}/resume`, { method: "POST", body: JSON.stringify({ values }) }),
 
   listRuns: (id: string) => request<FlowRun[]>(`/flows/${id}/runs`),
 
   generateJava: (id: string) =>
     request<{ source: string; className: string }>(`/flows/${id}/generate-java`, { method: "POST" }),
+  publishedArtifact: (flowId: string, nodeId: string) => request<{ id: string; sourceCode: string; version: number } | null>(`/flows/${flowId}/artifacts/node/${nodeId}/published`),
 };
 
 export { API_URL };
