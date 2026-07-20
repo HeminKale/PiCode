@@ -46,6 +46,9 @@ export const api = {
   runFlow: (id: string) => request<{ runId: string }>(`/flows/${id}/run`, { method: "POST" }),
 
   listRuns: (id: string) => request<FlowRun[]>(`/flows/${id}/runs`),
+
+  generateJava: (id: string) =>
+    request<{ source: string; className: string }>(`/flows/${id}/generate-java`, { method: "POST" }),
 };
 
 export { API_URL };

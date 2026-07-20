@@ -55,7 +55,7 @@ export class LLMService {
     return {
       flow,
       reasoning:
-        "Generated with A1 (data) nodes first, B1 (logic) in the middle, D1 (rules) last, per the standard FlowOS layer ordering.",
+        "Generated with A1 (data) nodes first, B1 (logic) next, D1 (rules) after that, and U1 (UI) nodes last where needed, per the standard FlowOS layer ordering.",
     };
   }
 }

@@ -39,4 +39,10 @@ export class FlowsController {
   remove(@Param("id") id: string) {
     return this.flowsService.deleteFlow(id);
   }
+
+  @Post(":id/generate-java")
+  @ApiOperation({ summary: "Generate a compilable {FlowName}Processor Java class from the flow JSON via the LLM" })
+  generateJava(@Param("id") id: string) {
+    return this.flowsService.generateJavaProcessor(id);
+  }
 }

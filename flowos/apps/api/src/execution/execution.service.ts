@@ -1,17 +1,28 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "crypto";
-import type { Flow, NodeLog } from "@flowos/types";
+import type { Flow, FlowEdge, FlowNode, NodeLog } from "@flowos/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { SocketGateway } from "../socket/socket.gateway";
-import { topologicalSort } from "./topological-sort";
+import { ExecutionContext } from "./execution-context";
+import { ConnectorsService } from "../connectors/connectors.service";
+import { JavaClassNotLoadedError, JavaRuntimeService } from "../java-runtime/java-runtime.service";
+import { LLMService } from "../llm/llm.service";
+import { GENERATE_JAVA_CLASS_SYSTEM_PROMPT } from "../java-runtime/generate-java-class.prompt";
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+interface NodeExecutionResult {
+  outputs: Record<string, unknown>;
+  /** Set only by CONDITION — the resolved outcome name, used to pick which outgoing edge to follow. */
+  branch?: string;
+}
 
 @Injectable()
 export class ExecutionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly socket: SocketGateway,
+    private readonly connectors: ConnectorsService,
+    private readonly javaRuntime: JavaRuntimeService,
+    private readonly llm: LLMService,
   ) {}
 
   async startRun(flowId: string): Promise<{ runId: string }> {
@@ -27,38 +38,36 @@ export class ExecutionService {
 
     // Fire and forget — the HTTP response returns immediately with the runId,
     // the frontend joins the Socket.io room for that runId and watches it play out.
-    void this.runMock(flow, runId);
+    void this.run(flow, runId);
 
     return { runId };
   }
 
-  private async runMock(flow: Flow, runId: string): Promise<void> {
-    const ordered = topologicalSort(flow.nodes, flow.edges);
+  private async run(flow: Flow, runId: string): Promise<void> {
+    const nodeById = new Map(flow.nodes.map((n) => [n.id, n]));
+    const outgoing = new Map<string, FlowEdge[]>();
+    const incoming = new Map<string, number>();
+    for (const n of flow.nodes) {
+      outgoing.set(n.id, []);
+      incoming.set(n.id, 0);
+    }
+    for (const e of flow.edges) {
+      outgoing.get(e.source)?.push(e);
+      incoming.set(e.target, (incoming.get(e.target) ?? 0) + 1);
+    }
+
+    // Entry points: nodes nothing points to. Falls back to the first declared node
+    // if every node has an incoming edge (e.g. a flow that's entirely a cycle).
+    const roots = flow.nodes.filter((n) => (incoming.get(n.id) ?? 0) === 0);
+    const startNodes = roots.length ? roots : flow.nodes.slice(0, 1);
+
+    const context = new ExecutionContext();
     const nodeLogs: NodeLog[] = [];
+    const visited = new Set<string>();
 
     try {
-      for (const node of ordered) {
-        const startedAt = new Date().toISOString();
-        this.socket.emitNodeStatus(runId, { nodeId: node.id, status: "pending" });
-        await sleep(800);
-
-        this.socket.emitNodeStatus(runId, { nodeId: node.id, status: "running" });
-        await sleep(600);
-
-        const mockOutputs = Object.fromEntries(node.outputs.map((o) => [o, `<mock ${o}>`]));
-        const endedAt = new Date().toISOString();
-
-        nodeLogs.push({
-          nodeId: node.id,
-          status: "success",
-          startedAt,
-          endedAt,
-          inputs: node.config,
-          outputs: mockOutputs,
-          durationMs: 1400,
-        });
-
-        this.socket.emitNodeStatus(runId, { nodeId: node.id, status: "success", outputs: mockOutputs });
+      for (const root of startNodes) {
+        await this.walk(root.id, nodeById, outgoing, context, visited, nodeLogs, runId);
       }
 
       await this.prisma.flowRun.update({
@@ -73,6 +82,228 @@ export class ExecutionService {
       });
       this.socket.emitRunError(runId, { message: err instanceof Error ? err.message : "Unknown execution error" });
     }
+  }
+
+  /**
+   * Walks the flow graph from `nodeId`, executing each node and following only the
+   * edges that should actually run: a CONDITION only follows its resolved outcome's
+   * edge, and a FOR re-walks its "For Each" body once per item (with a fresh `visited`
+   * set per iteration, seeded with the FOR node itself so the loop-back edge terminates)
+   * before continuing down "After Last". Everything else fans out to all outgoing edges.
+   */
+  private async walk(
+    nodeId: string,
+    nodeById: Map<string, FlowNode>,
+    outgoing: Map<string, FlowEdge[]>,
+    context: ExecutionContext,
+    visited: Set<string>,
+    nodeLogs: NodeLog[],
+    runId: string,
+  ): Promise<void> {
+    if (visited.has(nodeId)) return;
+    visited.add(nodeId);
+
+    const node = nodeById.get(nodeId);
+    if (!node) return;
+
+    const { branch } = await this.executeAndLog(node, context, nodeLogs, runId);
+    const edges = outgoing.get(nodeId) ?? [];
+
+    if (node.type === "CONDITION") {
+      const matchEdge = edges.find((e) => e.label === branch);
+      if (matchEdge) await this.walk(matchEdge.target, nodeById, outgoing, context, visited, nodeLogs, runId);
+      return;
+    }
+
+    if (node.type === "FOR") {
+      const config = node.config as { iterateVar: string; itemVar: string };
+      const items = context.get<unknown[]>(config.iterateVar);
+      const bodyEdge = edges.find((e) => e.label === "For Each");
+      const exitEdge = edges.find((e) => e.label === "After Last");
+
+      if (bodyEdge && Array.isArray(items)) {
+        for (const item of items) {
+          context.set(config.itemVar, item);
+          const loopVisited = new Set<string>([nodeId]);
+          await this.walk(bodyEdge.target, nodeById, outgoing, context, loopVisited, nodeLogs, runId);
+        }
+      }
+      if (exitEdge) await this.walk(exitEdge.target, nodeById, outgoing, context, visited, nodeLogs, runId);
+      return;
+    }
+
+    for (const edge of edges) {
+      await this.walk(edge.target, nodeById, outgoing, context, visited, nodeLogs, runId);
+    }
+  }
+
+  private async executeAndLog(
+    node: FlowNode,
+    context: ExecutionContext,
+    nodeLogs: NodeLog[],
+    runId: string,
+  ): Promise<NodeExecutionResult> {
+    const startedAt = new Date().toISOString();
+    this.socket.emitNodeStatus(runId, { nodeId: node.id, status: "pending" });
+    this.socket.emitNodeStatus(runId, { nodeId: node.id, status: "running" });
+
+    try {
+      const result = await this.executeNode(node, context);
+      const endedAt = new Date().toISOString();
+
+      nodeLogs.push({
+        nodeId: node.id,
+        status: "success",
+        startedAt,
+        endedAt,
+        inputs: context.snapshot(),
+        outputs: result.outputs,
+        durationMs: Date.now() - new Date(startedAt).getTime(),
+      });
+      this.socket.emitNodeStatus(runId, { nodeId: node.id, status: "success", outputs: result.outputs });
+      return result;
+    } catch (err) {
+      const endedAt = new Date().toISOString();
+      const message = err instanceof Error ? err.message : "Unknown node error";
+      nodeLogs.push({
+        nodeId: node.id,
+        status: "error",
+        startedAt,
+        endedAt,
+        inputs: context.snapshot(),
+        outputs: {},
+        error: message,
+        durationMs: Date.now() - new Date(startedAt).getTime(),
+      });
+      this.socket.emitNodeStatus(runId, { nodeId: node.id, status: "error" });
+      throw err;
+    }
+  }
+
+  /** A field value that names an existing context variable resolves to that variable; otherwise it's used literally. */
+  private resolveValue(context: ExecutionContext, value: unknown): unknown {
+    if (typeof value === "string" && context.get(value) !== undefined) return context.get(value);
+    return value;
+  }
+
+  private resolveFields(context: ExecutionContext, fields: Record<string, unknown> = {}): Record<string, unknown> {
+    return Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, this.resolveValue(context, v)]));
+  }
+
+  private async executeNode(node: FlowNode, context: ExecutionContext): Promise<NodeExecutionResult> {
+    const config = node.config as Record<string, any>;
+    let result: unknown;
+    let branch: string | undefined;
+
+    switch (node.type) {
+      case "SOURCE":
+        context.set("__activeConnectorId", config.connectorId);
+        result = { connectorId: config.connectorId };
+        break;
+      case "SELECT": {
+        const connectionString = await this.connectors.resolveConnectionString(context.get("__activeConnectorId"));
+        result = await this.connectors.select(config.query ?? `SELECT * FROM ${config.source}`, [], connectionString);
+        break;
+      }
+      case "CREATE": {
+        const connectionString = await this.connectors.resolveConnectionString(context.get("__activeConnectorId"));
+        result = await this.connectors.insert(config.target, this.resolveFields(context, config.fields), connectionString);
+        break;
+      }
+      case "UPDATE": {
+        const connectionString = await this.connectors.resolveConnectionString(context.get("__activeConnectorId"));
+        result = await this.connectors.update(config.target, config.where, this.resolveFields(context, config.fields), connectionString);
+        break;
+      }
+      case "DELETE": {
+        const connectionString = await this.connectors.resolveConnectionString(context.get("__activeConnectorId"));
+        result = await this.connectors.remove(config.target, config.where, connectionString);
+        break;
+      }
+      case "ASSIGN":
+        for (const assignment of config.assignments ?? []) {
+          const current = context.get<any>(assignment.variable);
+          const value = this.resolveValue(context, assignment.value);
+          const next =
+            assignment.operator === "Add"
+              ? Number(current ?? 0) + Number(value)
+              : assignment.operator === "Subtract"
+                ? Number(current ?? 0) - Number(value)
+                : assignment.operator === "AddItemToList"
+                  ? [...(Array.isArray(current) ? current : []), value]
+                  : assignment.operator === "RemoveItemFromList"
+                    ? Array.isArray(current)
+                      ? current.filter((item) => item !== value)
+                      : []
+                    : value;
+          context.set(assignment.variable, next);
+        }
+        result = context.snapshot();
+        break;
+      case "CONDITION": {
+        const match = (config.outcomes ?? []).find((outcome: any) =>
+          (outcome.conditions ?? []).every((condition: any) =>
+            this.compare(context.get(condition.resource), condition.operator, condition.value),
+          ),
+        );
+        branch = match?.name ?? config.defaultOutcomeName;
+        result = { outcome: branch };
+        break;
+      }
+      case "FOR":
+        result = { items: context.get(config.iterateVar) ?? [], itemVar: config.itemVar };
+        break;
+      case "CALL_JAVA": {
+        const inputVars: string[] = config.inputVars ?? [];
+        const input = Object.fromEntries(inputVars.map((name) => [name, context.get(name)]));
+        result = await this.callJava(config.className, config.method, input);
+        break;
+      }
+      case "RULE":
+        result = { matched: (config.conditions ?? []).every((condition: any) => this.compare(context.get(condition.field), condition.op, condition.value)) };
+        break;
+      case "NOTIFY":
+        result = { delivered: false, reason: "No notification provider configured", channel: config.channel };
+        break;
+      case "AUDIT_LOG":
+        result = { event: config.event, data: config.dataVars?.map((name: string) => context.get(name)) };
+        break;
+      default:
+        result = Object.fromEntries(node.outputs.map((name) => [name, context.get(name)]));
+    }
+
+    const outputs = node.outputs.length ? Object.fromEntries(node.outputs.map((name) => [name, result])) : { result };
+    Object.entries(outputs).forEach(([name, value]) => context.set(name, value));
+    return { outputs, branch };
+  }
+
+  /**
+   * Calls a CALL_JAVA node's target method via the Java Runtime. If the class isn't loaded yet
+   * (signaled by JavaClassNotLoadedError, raised on a 404 from the runtime's execute endpoint),
+   * generates a compilable Java source for it via the LLM, hot-loads it, and retries once.
+   */
+  private async callJava(className: string, method: string, input: Record<string, unknown>): Promise<unknown> {
+    try {
+      return await this.javaRuntime.executeClass(className, method, input);
+    } catch (err) {
+      if (!(err instanceof JavaClassNotLoadedError)) throw err;
+
+      const userPrompt = `Class name: ${className}\nMethod name: ${method}\nInput keys available in the "input" map: ${Object.keys(input).join(", ") || "(none)"}`;
+      const raw = await this.llm.generate(GENERATE_JAVA_CLASS_SYSTEM_PROMPT, userPrompt, { maxTokens: 2000 });
+      const sourceCode = raw.replace(/^```(?:java)?\s*/i, "").replace(/```\s*$/i, "").trim();
+
+      await this.javaRuntime.loadClass(className, sourceCode);
+      return this.javaRuntime.executeClass(className, method, input);
+    }
+  }
+
+  private compare(actual: any, operator: string, expected: any): boolean {
+    if (operator === "Equals" || operator === "=") return actual === expected;
+    if (operator === "NotEquals" || operator === "!=") return actual !== expected;
+    if (operator === "GreaterThan" || operator === ">") return Number(actual) > Number(expected);
+    if (operator === "LessThan" || operator === "<") return Number(actual) < Number(expected);
+    if (operator === "Contains") return Array.isArray(actual) ? actual.includes(expected) : String(actual).includes(String(expected));
+    return false;
   }
 
   async getRun(runId: string) {

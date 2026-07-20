@@ -14,7 +14,7 @@ FlowNode shape:
 {
   "id": string,            // unique within the flow, e.g. "n1", "n2"
   "type": string,           // one of the node types listed below
-  "layer": "A1" | "B1" | "D1",
+  "layer": "A1" | "B1" | "D1" | "U1",
   "label": string,          // short human-readable name
   "config": object,         // node-specific config, see shapes below
   "inputs": string[],       // variable names this node reads from context
@@ -27,22 +27,34 @@ FlowEdge shape:
 { "id": string, "source": string, "target": string, "label"?: string }
 
 LAYER RULES:
-- A1 (Data Layer): nodes that GET data — SELECT (DB query), JOIN (merge datasets), FILTER (subset rows), TRANSFORM (reshape/map fields), AGGREGATE (group/sum/count), OUTPUT (write result)
-- B1 (Logic Layer): nodes that PROCESS data — FOR (iterate list), CONDITION (if/else branch), CALL_JAVA (external Java method, use when custom code is needed), UPDATE (modify a record), NOTIFY (send message), RETURN (end flow with value)
+- A1 (Data Layer): nodes that get, shape, or persist data — SOURCE (bind connector; use as the entry node), SELECT (fetch rows), CREATE (insert record), UPDATE (persist a change to an external connector), DELETE (remove record), JOIN (merge datasets), FILTER (subset rows), TRANSFORM (reshape/map fields), AGGREGATE (group/sum/count), OUTPUT (write final result)
+- B1 (Logic Layer): nodes that process, branch, or manipulate in-memory execution state — FOR (iterate list), CONDITION (multi-outcome branch), ASSIGN (set in-memory variables; never use UPDATE for this), CALL_JAVA (external Java method, use when custom code is needed), NOTIFY (send message), RETURN (end flow with value)
 - D1 (Rules Layer): nodes that DECIDE — RULE (evaluate conditions against data), EVALUATE (score/classify), APPROVE (positive outcome), REJECT (negative outcome), EXCEPTION (handle edge case), AUDIT_LOG (write compliance record)
+- U1 (UI Layer): nodes that render or compose a business-user interface — DISPLAY (show a generated screen and later collect its input), COMPONENT (embed another Flow bundle in a Page-type flow). U1 is schema-only for now; include it only when the requested flow genuinely needs an interactive UI or page composition.
 
-NODE ORDERING RULE: Always place A1 nodes first (data gathering), then B1 nodes (processing), then D1 nodes (decisions). This is the natural data flow.
+NODE ORDERING RULE: Always place A1 nodes first (data gathering/persistence), then B1 nodes (processing), then D1 nodes (decisions). Place U1 nodes after the logic and rules that feed them, where relevant. This is the natural data flow.
 
 CONFIG SHAPES per node type:
+- SOURCE: { connectorId: string }
 - SELECT: { source: string, query?: string, filter?: string, outputVar: string }
+- CREATE: { target: string, fields: Record<string, string>, outputVar: string }
+- UPDATE: { target: string, where: string, fields: Record<string, string> }
+- DELETE: { target: string, where: string }
 - JOIN: { left: string, right: string, on: string, type: "inner"|"left"|"right" }
 - FOR: { iterateVar: string, itemVar: string }
-- CONDITION: { expression: string, trueLabel: string, falseLabel: string }
+- CONDITION: { outcomes: Array<{name: string, logic: "AND"|"OR", conditions: Array<{resource: string, operator: string, value: any}>}>, defaultOutcomeName: string }
+- ASSIGN: { assignments: Array<{variable: string, operator: "Equals"|"Add"|"Subtract"|"AddItemToList"|"RemoveItemFromList", value: any}> }
 - CALL_JAVA: { className: string, method: string, inputVars: string[], outputVar: string }
 - RULE: { conditions: Array<{field: string, op: string, value: any}>, logic: "AND"|"OR" }
 - NOTIFY: { channel: "slack"|"email"|"teams", target: string, messageTemplate: string }
 - AUDIT_LOG: { event: string, dataVars: string[] }
+- DISPLAY: { bundleId: string, fields: Array<{variable: string, label: string}> }
+- COMPONENT: { embeddedFlowId: string, position: { x: number, y: number, width: number, height: number } }
 
-POSITION RULE: Start the first node at x:100, y:200. Each subsequent node: x += 250. Branch nodes: true branch y -= 100, false branch y += 100.
+CONDITION AND FOR EDGE RULES:
+- A CONDITION has one outgoing edge for every outcome. Each edge's label must exactly equal that outcome's name. Put outcomes in evaluation order and include a final default/catch-all outcome named by defaultOutcomeName. A binary if/else is simply two outcomes; never make a chain of binary CONDITION nodes for a multi-way branch.
+- A FOR node has an outgoing edge labeled "For Each" to its loop body and another labeled "After Last" to the exit path.
+
+POSITION RULE: Start the first node at x:100, y:200. Each subsequent node: x += 250. For branch outcomes, use distinct y positions so every labeled edge is legible.
 
 Generate a complete, valid flow. Include realistic config values based on the user's description. Write a plain-English metadata.description for every node — it's shown to non-technical business users.`;

@@ -1,0 +1,91 @@
+# FlowOS — Sprint 2.1: Schema Foundations
+
+## Status — Completed 20 July 2026
+
+Sprint 2.1 has been completed on the `Phase-2` branch.
+
+Delivered:
+- Added the `SOURCE`, `CREATE`, `UPDATE`, and `DELETE` A1 data-node schema coverage, including explicit connector binding through `SOURCE`.
+- Added the `ASSIGN` B1 node for in-memory execution-context updates, keeping it distinct from connector-persisted `UPDATE` operations.
+- Replaced the binary `CONDITION` generation contract with ordered, multi-outcome conditions and labeled outcome edges.
+- Added the `U1` UI layer with schema-only `DISPLAY` and `COMPONENT` nodes.
+- Updated the LLM generation prompt for all new config shapes, A1 → B1 → D1 → U1 ordering, and multi-way branch generation.
+- Updated the canvas to render U1 nodes; prior binary-condition flows remain renderable because canvas and configuration rendering are shape-agnostic.
+
+Validation completed:
+- `pnpm --filter api build`
+- `pnpm --filter web build`
+
+Not included: runtime execution semantics for `DISPLAY`, `COMPONENT`, `ASSIGN`, connector CRUD operations, and loop-cycle execution. These remain deliberately deferred to the later sprints listed below.
+
+Copy this whole doc to whoever's picking up the work — it's self-contained. If they're pasting it into an AI coding assistant, tell them to also give it read access to the `Planning and setup` folder referenced throughout (not just the `flowos` repo) — several links below point into it.
+
+---
+
+## Context — What's Actually Built and Verified
+
+Repo: `https://github.com/HeminKale/PiCode`, branch `Phase-1`. Sprint 1 is done and deployed (Vercel + Railway, both live). Full detail on what's built vs. what's still unverified: **[Phases/Sprint 1](../Phases/Sprint%201)** and **[Phases/Sprint 1 pending items](../Phases/Sprint%201%20pending%20items)** — read both before touching code.
+
+Short version:
+- **Backend** (`flowos/apps/api`): NestJS. `FlowsModule` (`/flows/generate`, CRUD), `LLMModule` (`ILLMProvider` abstraction — **OpenAI is the active default**, Claude registered but unused), `PrismaModule` (Postgres via Supabase, using `@prisma/adapter-pg` + the legacy `prisma-client-js` generator — Prisma 7's new client is ESM-only and incompatible with this CommonJS app), `SocketModule` + `ExecutionModule` (currently **mock** execution — topological sort over edges, artificial delays, live `node:status` events over Socket.io).
+- **Frontend** (`flowos/apps/web`): Next.js. Prompt builder, React Flow canvas with A1/B1/D1 custom node components, live run view, flow library — all wired to the real API.
+- **Known environment quirks, already solved — do not re-diagnose these:**
+  - Prisma's schema-engine hangs indefinitely against this Supabase project (IPv6-only direct host). Workaround documented in **[Backend_Stack/postgresql-prisma-setup.md](../Backend_Stack/postgresql-prisma-setup.md)** — "Known Issue" section.
+  - `flowos/apps/api/package.json` has `"postinstall": "prisma generate"` — **load-bearing**, Railway's build broke without it. Don't remove it.
+  - `LLM_PROVIDER=openai` is the deployed default. Don't silently switch back to Claude.
+
+## What Changed Since Sprint 1 Shipped
+
+A deep architecture pass (whiteboard sketches + discussion) extended the vision well beyond backend automation: interactive step-flows where a business user fills in generated screens mid-run, and composed "app pages" built by placing multiple independently-generated flow bundles (a button, a form, a field-with-action) onto one page — all still expressed as the same Flow JSON. Full picture: **[Architecture/system-architecture.md](../Architecture/system-architecture.md)** and the published diagram at `https://claude.ai/code/artifact/a27858c6-c5cb-4a91-9da1-d5ca149ddc67`.
+
+This expanded Sprint 2 into four sub-sprints (2.1–2.4) plus two new sprints after it. Full breakdown: **[Plan/technical-sprints.md](../Plan/technical-sprints.md)**. **This document only covers 2.1** — the schema work, which has no dependencies and is safe to start immediately.
+
+---
+
+## Your Task: Sprint 2.1 — Schema Foundations
+
+Pure schema and prompt work. No new infrastructure, no new services — safe, contained, and unblocks everything after it.
+
+### 1. New node types
+Add to `flowos/packages/types/src/flow.types.ts`:
+- **`DELETE`** (A1) — closes the CRUD set alongside existing `SELECT`/`UPDATE`.
+- **`CREATE`** (A1) — insert operation, also missing today.
+- **`SOURCE`** (A1) — binds the flow to a connector explicitly, as an entry node (replaces inferring the start node from in-degree).
+- **`ASSIGN`** (B1) — sets in-memory execution-context variables (distinct from `UPDATE`, which persists to a connector — these were conflated before).
+
+Exact config shapes, inputs/outputs pattern, and worked examples for every one of these: **[Architecture/node-reference.md](../Architecture/node-reference.md)** — this is the spec, match it exactly, don't improvise shapes.
+
+### 2. Redesign `CONDITION`
+Currently binary (`{ expression, trueLabel, falseLabel }`). Redesign to multi-outcome, matching CRM Decision element: one node, multiple named outcomes each with its own condition set, evaluated in order, with a default/catch-all. Exact target shape is in `node-reference.md` under `CONDITION`. Binary if/else becomes just the 2-outcome case — no separate node type.
+
+### 3. New `U1` layer
+Add a fourth layer alongside `A1`/`B1`/`D1` — kept separate deliberately, see `node-reference.md`'s intro for why. Add `DISPLAY` and `COMPONENT` node types under it. **Schema only this sprint** — they're not functional until Sprint 3/4, just need to exist in the type union and the LLM prompt so later sprints aren't blocked on a schema change.
+
+### 4. Update the LLM generation prompt
+`flowos/apps/api/src/llm/generate-flow.prompt.ts` — add the new node types, their config shapes, and the layer rule for `U1`. Keep the existing ordering rule (A1 → B1 → D1) and extend it to include `U1` where relevant (UI nodes typically come after the logic/rules that feed them).
+
+### 5. Update everything downstream that assumes the old shapes
+Grep for `CONDITION` usage in `flowos/apps/api/src/execution/` (currently mock, but the topological sort and any type references need to compile against the new shape) and `flowos/apps/web/src/components/` (canvas rendering, config panel).
+
+---
+
+## Acceptance Criteria
+- `pnpm --filter api build` and `pnpm --filter web build` both pass clean with the new types.
+- Generating a flow via `/flows/generate` that needs a multi-way branch produces one `CONDITION` node with multiple labeled outcome edges, not a chain of binary conditions.
+- Generating a flow that needs to accumulate a value across iterations produces an `ASSIGN` node, not a misused `UPDATE`.
+- Existing Sprint 1 flows (binary-condition ones, if any were saved) don't crash the canvas — either migrate them or confirm the new shape is backward-compatible enough to render.
+
+## Guardrails
+- Don't touch `postinstall: prisma generate` or the `prisma-client-js` + `@prisma/adapter-pg` setup.
+- Don't change `LLM_PROVIDER` default away from `openai`.
+- No Prisma schema changes in this sub-sprint — if a future sprint needs one, follow the manual-migration workaround in `postgresql-prisma-setup.md`, `prisma migrate dev` will hang otherwise.
+
+---
+
+## What's After This (don't start yet, just so the roadmap is clear)
+
+- **2.2** — real execution engine + DB connectors (replaces the mock engine, adds real `FOR` loop support with cycle handling).
+- **2.3** — manual canvas editing (insert-node-on-edge, real per-node edit forms).
+- **2.4** — Java runtime microservice + dynamic `CALL_JAVA` compilation.
+
+Each depends on 2.1 landing first. Full detail on all of them in **[Plan/technical-sprints.md](../Plan/technical-sprints.md)**.

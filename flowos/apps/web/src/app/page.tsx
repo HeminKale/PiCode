@@ -40,7 +40,7 @@ export default function Home() {
         <div className="w-full max-w-2xl">
           <div className="text-center mb-8">
             <div className="inline-block text-[10px] font-bold tracking-widest uppercase text-violet-300 bg-violet-950 border border-violet-700 rounded-full px-3 py-1 mb-3">
-              A1 + B1 + D1 · FlowOS
+              A1 + B1 + D1 + U1 · FlowOS
             </div>
             <h1 className="text-3xl font-extrabold tracking-tight mb-2">FlowOS</h1>
             <p className="text-slate-400 text-sm">Describe a business process. Get a working automation flow.</p>
