@@ -28,6 +28,7 @@ model Flow {
   updatedAt   DateTime @updatedAt
 
   runs FlowRun[]
+  artifacts Artifact[]
 }
 
 model FlowRun {
@@ -49,4 +50,20 @@ model Connector {
   encryptedCredentials String
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
+}
+
+model Artifact {
+  id String @id @default(cuid())
+  flowId String
+  flow Flow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  nodeId String
+  kind String
+  version Int
+  sourceCode String
+  status String @default("draft")
+  isPublished Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([flowId, nodeId, kind, version])
+  @@index([flowId, nodeId, kind, isPublished])
 }

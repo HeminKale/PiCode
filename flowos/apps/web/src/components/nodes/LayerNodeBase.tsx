@@ -16,6 +16,7 @@ const STATUS_RING: Record<string, string> = {
   running: "ring-2 ring-sky-400 animate-pulse",
   success: "ring-2 ring-emerald-400",
   error: "ring-2 ring-red-500",
+  awaiting_input: "ring-2 ring-violet-400 animate-pulse",
 };
 
 const STATUS_ICON: Record<string, string> = {

@@ -3,11 +3,12 @@ import { ExecutionController } from "./execution.controller";
 import { ExecutionService } from "./execution.service";
 import { SocketModule } from "../socket/socket.module";
 import { ConnectorsModule } from "../connectors/connectors.module";
+import { ArtifactsModule } from "../artifacts/artifacts.module";
 import { JavaRuntimeModule } from "../java-runtime/java-runtime.module";
 import { LLMModule } from "../llm/llm.module";
 
 @Module({
-  imports: [SocketModule, ConnectorsModule, JavaRuntimeModule, LLMModule],
+  imports: [SocketModule, ConnectorsModule, JavaRuntimeModule, LLMModule, ArtifactsModule],
   controllers: [ExecutionController],
   providers: [ExecutionService],
 })

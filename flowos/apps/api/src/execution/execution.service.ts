@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import type { Flow, FlowEdge, FlowNode, NodeLog } from "@flowos/types";
 import { PrismaService } from "../prisma/prisma.service";
@@ -14,6 +14,9 @@ interface NodeExecutionResult {
   /** Set only by CONDITION — the resolved outcome name, used to pick which outgoing edge to follow. */
   branch?: string;
 }
+
+interface LoopContinuation { forNodeId: string; bodyTarget: string; exitTarget?: string; itemVar: string; items: unknown[]; index: number; }
+class AwaitingInputError extends Error { loop?: LoopContinuation; constructor(readonly nodeId: string) { super("Flow is awaiting DISPLAY input"); } }
 
 @Injectable()
 export class ExecutionService {
@@ -43,7 +46,26 @@ export class ExecutionService {
     return { runId };
   }
 
-  private async run(flow: Flow, runId: string): Promise<void> {
+  async resumeRun(runId: string, values: Record<string, unknown>): Promise<{ runId: string }> {
+    const run = await this.getRun(runId);
+    if (run.status !== "awaiting_input") throw new NotFoundException(`Run ${runId} is not awaiting input`);
+    const flow = (await this.prisma.flow.findUniqueOrThrow({ where: { id: run.flowId } })).flowJson as unknown as Flow;
+    const saved = run.inputs as Record<string, unknown>;
+    const nodeId = saved.__flowosResumeNodeId as string;
+    const display = flow.nodes.find((node) => node.id === nodeId && node.type === "DISPLAY");
+    if (!display) throw new BadRequestException("Run continuation does not reference a DISPLAY node");
+    const allowed = new Set(((display.config as { fields?: Array<{ variable: string }> }).fields ?? []).map((field) => field.variable));
+    const invalid = Object.keys(values).filter((key) => !allowed.has(key));
+    if (invalid.length) throw new BadRequestException(`Unexpected DISPLAY input fields: ${invalid.join(", ")}`);
+    const context = { ...saved, ...Object.fromEntries(Object.entries(values).filter(([key]) => allowed.has(key))) };
+    delete context.__flowosResumeNodeId;
+    delete context.__flowosLoopState;
+    await this.prisma.flowRun.update({ where: { id: runId }, data: { status: "running", inputs: context as object } });
+    void this.run(flow, runId, context, nodeId, run.nodeLogs as unknown as NodeLog[], saved.__flowosLoopState as LoopContinuation | undefined);
+    return { runId };
+  }
+
+  private async run(flow: Flow, runId: string, initial: Record<string, unknown> = {}, resumeNodeId?: string, priorLogs: NodeLog[] = [], loopState?: LoopContinuation): Promise<void> {
     const nodeById = new Map(flow.nodes.map((n) => [n.id, n]));
     const outgoing = new Map<string, FlowEdge[]>();
     const incoming = new Map<string, number>();
@@ -59,15 +81,33 @@ export class ExecutionService {
     // Entry points: nodes nothing points to. Falls back to the first declared node
     // if every node has an incoming edge (e.g. a flow that's entirely a cycle).
     const roots = flow.nodes.filter((n) => (incoming.get(n.id) ?? 0) === 0);
-    const startNodes = roots.length ? roots : flow.nodes.slice(0, 1);
+    const startNodes = resumeNodeId ? (outgoing.get(resumeNodeId) ?? []).map((edge) => nodeById.get(edge.target)).filter((node): node is FlowNode => !!node) : roots.length ? roots : flow.nodes.slice(0, 1);
 
-    const context = new ExecutionContext();
-    const nodeLogs: NodeLog[] = [];
+    const context = new ExecutionContext(initial);
+    const nodeLogs: NodeLog[] = [...priorLogs];
     const visited = new Set<string>();
 
     try {
+      if (loopState) {
+        visited.add(loopState.forNodeId);
+        const resumeEdges = outgoing.get(resumeNodeId!) ?? [];
+        for (const edge of resumeEdges) await this.walk(edge.target, nodeById, outgoing, context, visited, nodeLogs, runId);
+        for (let index = loopState.index + 1; index < loopState.items.length; index++) {
+          context.set(loopState.itemVar, loopState.items[index]);
+          try {
+            await this.walk(loopState.bodyTarget, nodeById, outgoing, context, new Set<string>([loopState.forNodeId]), nodeLogs, runId);
+          } catch (err) {
+            if (err instanceof AwaitingInputError && !err.loop) {
+              err.loop = { ...loopState, index };
+            }
+            throw err;
+          }
+        }
+        if (loopState.exitTarget) await this.walk(loopState.exitTarget, nodeById, outgoing, context, visited, nodeLogs, runId);
+      } else {
       for (const root of startNodes) {
         await this.walk(root.id, nodeById, outgoing, context, visited, nodeLogs, runId);
+      }
       }
 
       await this.prisma.flowRun.update({
@@ -76,6 +116,11 @@ export class ExecutionService {
       });
       this.socket.emitRunComplete(runId, { status: "completed" });
     } catch (err) {
+      if (err instanceof AwaitingInputError) {
+        const saved = { ...context.snapshot(), __flowosResumeNodeId: err.nodeId, ...(err.loop ? { __flowosLoopState: err.loop } : {}) };
+        await this.prisma.flowRun.update({ where: { id: runId }, data: { status: "awaiting_input", inputs: saved as object, nodeLogs: nodeLogs as object[] } });
+        return;
+      }
       await this.prisma.flowRun.update({
         where: { id: runId },
         data: { status: "failed", endedAt: new Date(), nodeLogs: nodeLogs as object[] },
@@ -122,10 +167,12 @@ export class ExecutionService {
       const exitEdge = edges.find((e) => e.label === "After Last");
 
       if (bodyEdge && Array.isArray(items)) {
-        for (const item of items) {
+        for (let index = 0; index < items.length; index++) {
+          const item = items[index];
           context.set(config.itemVar, item);
           const loopVisited = new Set<string>([nodeId]);
-          await this.walk(bodyEdge.target, nodeById, outgoing, context, loopVisited, nodeLogs, runId);
+          try { await this.walk(bodyEdge.target, nodeById, outgoing, context, loopVisited, nodeLogs, runId); }
+          catch (err) { if (err instanceof AwaitingInputError && !err.loop) err.loop = { forNodeId: nodeId, bodyTarget: bodyEdge.target, exitTarget: exitEdge?.target, itemVar: config.itemVar, items, index }; throw err; }
         }
       }
       if (exitEdge) await this.walk(exitEdge.target, nodeById, outgoing, context, visited, nodeLogs, runId);
@@ -163,6 +210,11 @@ export class ExecutionService {
       this.socket.emitNodeStatus(runId, { nodeId: node.id, status: "success", outputs: result.outputs });
       return result;
     } catch (err) {
+      if (err instanceof AwaitingInputError) {
+        nodeLogs.push({ nodeId: node.id, status: "awaiting_input", startedAt, inputs: context.snapshot(), outputs: {}, durationMs: Date.now() - new Date(startedAt).getTime() });
+        this.socket.emitNodeStatus(runId, { nodeId: node.id, status: "awaiting_input" });
+        throw err;
+      }
       const endedAt = new Date().toISOString();
       const message = err instanceof Error ? err.message : "Unknown node error";
       nodeLogs.push({
@@ -253,6 +305,8 @@ export class ExecutionService {
       case "FOR":
         result = { items: context.get(config.iterateVar) ?? [], itemVar: config.itemVar };
         break;
+      case "DISPLAY":
+        throw new AwaitingInputError(node.id);
       case "CALL_JAVA": {
         const inputVars: string[] = config.inputVars ?? [];
         const input = Object.fromEntries(inputVars.map((name) => [name, context.get(name)]));

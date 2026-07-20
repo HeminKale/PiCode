@@ -1,4 +1,5 @@
-import { Controller, Post, Get, Delete, Body, Param } from "@nestjs/common";
+import { Controller, Post, Get, Delete, Body, Param, Res } from "@nestjs/common";
+import type { Response } from "express";
 import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { FlowsService } from "./flows.service";
 import { GenerateFlowDto } from "./dto/generate-flow.dto";
@@ -44,5 +45,11 @@ export class FlowsController {
   @ApiOperation({ summary: "Generate a compilable {FlowName}Processor Java class from the flow JSON via the LLM" })
   generateJava(@Param("id") id: string) {
     return this.flowsService.generateJavaProcessor(id);
+  }
+
+  @Get(":id/viewer.pdf")
+  async viewerPdf(@Param("id") id: string, @Res() response: Response) {
+    const pdf = await this.flowsService.generateViewerPdf(id);
+    response.type("application/pdf").attachment("flow-viewer.pdf").send(pdf);
   }
 }

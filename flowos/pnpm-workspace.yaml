@@ -7,4 +7,5 @@ allowBuilds:
   '@scarf/scarf': false
   prisma: true
   sharp: true
+  puppeteer: true
   unrs-resolver: true

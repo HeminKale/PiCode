@@ -6,6 +6,7 @@ import { LLMService } from "../llm/llm.service";
 import { GenerateFlowDto } from "./dto/generate-flow.dto";
 import { CreateFlowDto } from "./dto/create-flow.dto";
 import { GENERATE_JAVA_PROCESSOR_SYSTEM_PROMPT } from "./generate-java.prompt";
+import puppeteer from "puppeteer";
 
 @Injectable()
 export class FlowsService {
@@ -83,6 +84,16 @@ export class FlowsService {
     const source = raw.replace(/^```(?:java)?\s*/i, "").replace(/```\s*$/i, "").trim();
 
     return { source, className };
+  }
+
+  async generateViewerPdf(id: string): Promise<Buffer> {
+    const record = await this.getFlow(id);
+    const flow = record.flowJson as unknown as Flow;
+    const latest = await this.prisma.flowRun.findFirst({ where: { flowId: id }, orderBy: { startedAt: "desc" } });
+    const escape = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
+    const steps = flow.nodes.map((node, index) => `<li><strong>${index + 1}. ${escape(node.label)}</strong><br>${escape(node.metadata?.description ?? `${node.type.replaceAll("_", " ").toLowerCase()} step.`)}</li>`).join("");
+    const browser = await puppeteer.launch({ headless: true });
+    try { const page = await browser.newPage(); await page.setContent(`<html><body><h1>${escape(flow.name)}</h1><p>${escape(flow.description)}</p><h2>Last run</h2><p>${escape(latest ? `${latest.status} · ${Array.isArray(latest.nodeLogs) ? latest.nodeLogs.length : 0} node logs` : "No runs yet")}</p><h2>Flow steps</h2><ol>${steps}</ol></body></html>`); return Buffer.from(await page.pdf({ format: "A4", printBackground: true })); } finally { await browser.close(); }
   }
 
   private toPascalCase(name: string): string {

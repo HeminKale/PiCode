@@ -11,7 +11,7 @@ export type NodeType =
   // U1 — UI Layer
   | "DISPLAY" | "COMPONENT";
 
-export type NodeStatus = "idle" | "pending" | "running" | "success" | "error";
+export type NodeStatus = "idle" | "pending" | "running" | "success" | "error" | "awaiting_input";
 
 export interface FlowNode {
   id: string;
@@ -69,7 +69,7 @@ export interface NodeLog {
 export interface FlowRun {
   id: string;
   flowId: string;
-  status: "queued" | "running" | "completed" | "failed";
+  status: "queued" | "running" | "awaiting_input" | "completed" | "failed";
   startedAt: string;
   endedAt?: string;
   inputs: Record<string, any>;
