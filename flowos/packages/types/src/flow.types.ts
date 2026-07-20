@@ -53,6 +53,9 @@ export interface Flow {
   edges: FlowEdge[];
   variables?: FlowVariable[];
   tags?: string[];
+  isPublished?: boolean;
+  icon?: string;
+  category?: string;
 }
 
 export interface NodeLog {

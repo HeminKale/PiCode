@@ -13,6 +13,7 @@ export default function CanvasPage() {
   const router = useRouter();
   const flow = useFlowStore((s) => s.flow);
   const setFlow = useFlowStore((s) => s.setFlow);
+  const updateFlowMetadata = useFlowStore((s) => s.updateFlowMetadata);
 
   const [loading, setLoading] = useState(!flow || flow.id !== params.id);
   const [saving, setSaving] = useState(false);
@@ -91,6 +92,11 @@ export default function CanvasPage() {
           <div className="text-sm font-semibold">{flow.name}</div>
           <div className="text-xs text-slate-500">{flow.description}</div>
         </div>
+        <div className="flex items-center gap-2 text-xs">
+          <input aria-label="App icon" value={flow.icon ?? ""} onChange={(event) => updateFlowMetadata({ icon: event.target.value })} placeholder="Icon" className="w-14 rounded bg-slate-900 px-2 py-1" />
+          <input aria-label="App category" value={flow.category ?? ""} onChange={(event) => updateFlowMetadata({ category: event.target.value })} placeholder="Category" className="w-24 rounded bg-slate-900 px-2 py-1" />
+          <label className="flex items-center gap-1 text-slate-300"><input type="checkbox" checked={flow.isPublished ?? false} onChange={(event) => updateFlowMetadata({ isPublished: event.target.checked })} /> Publish</label>
+        </div>
         <div className="flex gap-2">
           <button
             onClick={handleRun}
@@ -112,6 +118,12 @@ export default function CanvasPage() {
           >
             {downloadingJava ? "Generating…" : "⤓ Download Java"}
           </button>
+          <Link
+            href={`/flow/${flow.id}/builder`}
+            className="rounded-md border border-slate-800 hover:border-slate-600 text-slate-300 text-xs font-semibold px-3 py-1.5 flex items-center"
+          >
+            Page Builder
+          </Link>
           <Link
             href={`/flow/${flow.id}/history`}
             className="rounded-md border border-slate-800 hover:border-slate-600 text-slate-300 text-xs font-semibold px-3 py-1.5 flex items-center"

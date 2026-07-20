@@ -31,13 +31,17 @@ export const api = {
         nodes: flow.nodes,
         edges: flow.edges,
         tags: flow.tags,
+        isPublished: flow.isPublished,
+        icon: flow.icon,
+        category: flow.category,
       }),
     }),
 
   listFlows: () =>
-    request<Array<{ id: string; name: string; description: string | null; tags: string[]; updatedAt: string }>>(
+    request<Array<{ id: string; name: string; description: string | null; tags: string[]; icon?: string | null; category?: string | null; isPublished: boolean; updatedAt: string }>>(
       "/flows",
     ),
+  listApps: () => request<Array<{ id: string; name: string; description: string | null; icon?: string | null; category?: string | null }>>("/flows/apps"),
 
   getFlow: (id: string) => request<{ id: string; flowJson: Flow }>(`/flows/${id}`),
 

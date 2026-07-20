@@ -51,9 +51,11 @@ export function Canvas({ interactive = true }: { interactive?: boolean }) {
         position: n.position,
         data: {
           label: n.label,
+          id: n.id,
           nodeType: n.type,
           layer: n.layer,
           configSummary: configSummary(n.config),
+          config: n.config,
           status: nodeStatus[n.id] ?? "idle",
         },
       })),
@@ -133,6 +135,8 @@ export function Canvas({ interactive = true }: { interactive?: boolean }) {
         edgesReconnectable={interactive}
         deleteKeyCode={null}
         nodesDraggable={interactive}
+        snapToGrid={interactive}
+        snapGrid={[20, 20]}
         colorMode="dark"
         fitView
       >
