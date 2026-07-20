@@ -47,6 +47,10 @@ export class FlowsController {
     return this.flowsService.generateJavaProcessor(id);
   }
 
+  @Get("apps")
+  @ApiOperation({ summary: "List published business applications" })
+  apps() { return this.flowsService.listPublishedApps(); }
+
   @Get(":id/viewer.pdf")
   async viewerPdf(@Param("id") id: string, @Res() response: Response) {
     const pdf = await this.flowsService.generateViewerPdf(id);

@@ -24,6 +24,9 @@ model Flow {
   version     Int      @default(1)
   flowJson    Json
   tags        String[]
+  isPublished Boolean  @default(false)
+  icon        String?
+  category    String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

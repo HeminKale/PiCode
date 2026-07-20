@@ -1,0 +1,5 @@
+"use client";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { api } from "@/lib/api";
+export default function AppsPage() { const [apps, setApps] = useState<Awaited<ReturnType<typeof api.listApps>>>([]); useEffect(() => { api.listApps().then(setApps); }, []); return <main className="min-h-full bg-[#0a0a0f] p-8 text-slate-100"><h1 className="text-3xl font-bold">Apps</h1><p className="mt-2 text-slate-400">Choose an app to get started.</p><div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{apps.map((app) => <Link key={app.id} href={`/app/${app.id}`} className="rounded-xl border border-slate-800 bg-[#13131a] p-5 transition hover:border-violet-500"><div className="text-3xl">{app.icon ?? "✨"}</div><div className="mt-4 font-semibold">{app.name}</div><p className="mt-1 text-sm text-slate-400">{app.description}</p>{app.category && <div className="mt-3 text-xs text-violet-300">{app.category}</div>}</Link>)}</div>{apps.length === 0 && <p className="mt-8 text-slate-500">No apps have been published yet.</p>}</main>; }

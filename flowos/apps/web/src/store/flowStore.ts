@@ -18,6 +18,7 @@ interface FlowState {
   selectNode: (nodeId: string | null) => void;
   updateNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
   updateNodeConfig: (nodeId: string, config: Record<string, any>) => void;
+  updateFlowMetadata: (metadata: Pick<Flow, "isPublished" | "icon" | "category">) => void;
   addNode: (node: FlowNode) => void;
   removeNode: (nodeId: string) => void;
   addEdge: (edge: FlowEdge) => void;
@@ -59,6 +60,8 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       flow: { ...flow, nodes: flow.nodes.map((n: FlowNode) => (n.id === nodeId ? { ...n, config } : n)) },
     });
   },
+
+  updateFlowMetadata: (metadata) => { const flow = get().flow; if (flow) set({ flow: { ...flow, ...metadata } }); },
 
   addNode: (node) => {
     const flow = get().flow;

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { IsString, IsOptional, IsArray, IsObject } from "class-validator";
+import { IsString, IsOptional, IsArray, IsObject, IsBoolean } from "class-validator";
 
 export class CreateFlowDto {
   @ApiPropertyOptional({ description: "If provided (e.g. from /flows/generate), reuses this id instead of generating a new one" })
@@ -28,4 +28,19 @@ export class CreateFlowDto {
   @IsOptional()
   @IsArray()
   tags?: string[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  icon?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isPublished?: boolean;
 }

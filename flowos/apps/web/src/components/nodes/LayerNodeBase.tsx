@@ -3,9 +3,11 @@ import type { NodeStatus } from "@flowos/types";
 
 export interface LayerNodeData {
   label: string;
+  id: string;
   nodeType: string;
   layer: string;
   configSummary: string;
+  config?: Record<string, unknown>;
   status?: NodeStatus;
   [key: string]: unknown;
 }

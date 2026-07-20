@@ -42,12 +42,18 @@ export class FlowsService {
         description: dto.description,
         flowJson: flowJson as object,
         tags: dto.tags ?? [],
+        icon: dto.icon,
+        category: dto.category,
+        isPublished: dto.isPublished ?? false,
       },
       update: {
         name: dto.name,
         description: dto.description,
         flowJson: flowJson as object,
         tags: dto.tags ?? [],
+        icon: dto.icon,
+        category: dto.category,
+        isPublished: dto.isPublished ?? false,
         version: { increment: 1 },
       },
     });
@@ -57,7 +63,7 @@ export class FlowsService {
 
   async listFlows() {
     return this.prisma.flow.findMany({
-      select: { id: true, name: true, description: true, tags: true, updatedAt: true },
+      select: { id: true, name: true, description: true, tags: true, icon: true, category: true, isPublished: true, updatedAt: true },
       orderBy: { updatedAt: "desc" },
     });
   }
@@ -84,6 +90,10 @@ export class FlowsService {
     const source = raw.replace(/^```(?:java)?\s*/i, "").replace(/```\s*$/i, "").trim();
 
     return { source, className };
+  }
+
+  async listPublishedApps() {
+    return this.prisma.flow.findMany({ where: { isPublished: true }, select: { id: true, name: true, description: true, icon: true, category: true, updatedAt: true }, orderBy: { updatedAt: "desc" } });
   }
 
   async generateViewerPdf(id: string): Promise<Buffer> {
