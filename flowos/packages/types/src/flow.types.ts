@@ -1,12 +1,15 @@
-export type NodeLayer = "A1" | "B1" | "D1";
+export type NodeLayer = "A1" | "B1" | "D1" | "U1";
 
 export type NodeType =
   // A1 — Data Layer
-  | "SELECT" | "JOIN" | "FILTER" | "TRANSFORM" | "AGGREGATE" | "OUTPUT"
+  | "SOURCE" | "SELECT" | "CREATE" | "UPDATE" | "DELETE"
+  | "JOIN" | "FILTER" | "TRANSFORM" | "AGGREGATE" | "OUTPUT"
   // B1 — Logic Layer
-  | "FOR" | "CONDITION" | "CALL_JAVA" | "UPDATE" | "NOTIFY" | "RETURN"
+  | "FOR" | "CONDITION" | "ASSIGN" | "CALL_JAVA" | "NOTIFY" | "RETURN"
   // D1 — Rules Layer
-  | "RULE" | "EVALUATE" | "APPROVE" | "REJECT" | "EXCEPTION" | "AUDIT_LOG";
+  | "RULE" | "EVALUATE" | "APPROVE" | "REJECT" | "EXCEPTION" | "AUDIT_LOG"
+  // U1 — UI Layer
+  | "DISPLAY" | "COMPONENT";
 
 export type NodeStatus = "idle" | "pending" | "running" | "success" | "error";
 

@@ -17,9 +17,10 @@ import { useFlowStore } from "@/store/flowStore";
 import { A1Node } from "./nodes/A1Node";
 import { B1Node } from "./nodes/B1Node";
 import { D1Node } from "./nodes/D1Node";
+import { U1Node } from "./nodes/U1Node";
 import type { LayerNodeData } from "./nodes/LayerNodeBase";
 
-const nodeTypes = { A1: A1Node, B1: B1Node, D1: D1Node };
+const nodeTypes = { A1: A1Node, B1: B1Node, D1: D1Node, U1: U1Node };
 
 function configSummary(config: Record<string, unknown>): string {
   const entries = Object.entries(config ?? {});
