@@ -1,0 +1,18 @@
+# Excluded from version control per project decision
+Planning and setup/
+.claude/
+
+# Node / build artifacts
+node_modules/
+.next/
+dist/
+coverage/
+.turbo/
+
+# Env files (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+*.log
+.DS_Store
