@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useEffect } from "react";
 import {
   ReactFlow,
   Background,
@@ -9,6 +9,7 @@ import {
   type Node,
   type Edge,
   type NodeMouseHandler,
+  type OnReconnect,
   applyNodeChanges,
   type NodeChange,
 } from "@xyflow/react";
@@ -19,8 +20,10 @@ import { B1Node } from "./nodes/B1Node";
 import { D1Node } from "./nodes/D1Node";
 import { U1Node } from "./nodes/U1Node";
 import type { LayerNodeData } from "./nodes/LayerNodeBase";
+import { InsertableEdge } from "./edges/InsertableEdge";
 
 const nodeTypes = { A1: A1Node, B1: B1Node, D1: D1Node, U1: U1Node };
+const edgeTypes = { default: InsertableEdge };
 
 function configSummary(config: Record<string, unknown>): string {
   const entries = Object.entries(config ?? {});
@@ -34,8 +37,11 @@ function configSummary(config: Record<string, unknown>): string {
 export function Canvas({ interactive = true }: { interactive?: boolean }) {
   const flow = useFlowStore((s) => s.flow);
   const nodeStatus = useFlowStore((s) => s.nodeStatus);
+  const selectedNodeId = useFlowStore((s) => s.selectedNodeId);
   const selectNode = useFlowStore((s) => s.selectNode);
   const updateNodePosition = useFlowStore((s) => s.updateNodePosition);
+  const removeNode = useFlowStore((s) => s.removeNode);
+  const reconnectEdgeAction = useFlowStore((s) => s.reconnectEdge);
 
   const nodes: Node<LayerNodeData>[] = useMemo(
     () =>
@@ -63,8 +69,10 @@ export function Canvas({ interactive = true }: { interactive?: boolean }) {
         label: e.label,
         animated: nodeStatus[e.source] === "running" || nodeStatus[e.source] === "success",
         style: { stroke: "#475569" },
+        data: { interactive },
+        reconnectable: interactive,
       })),
-    [flow, nodeStatus],
+    [flow, nodeStatus, interactive],
   );
 
   const onNodesChange = useCallback(
@@ -85,6 +93,29 @@ export function Canvas({ interactive = true }: { interactive?: boolean }) {
     [selectNode],
   );
 
+  const onReconnect: OnReconnect = useCallback(
+    (oldEdge, newConnection) => {
+      if (!newConnection.source || !newConnection.target) return;
+      reconnectEdgeAction(oldEdge.id, newConnection.source, newConnection.target);
+    },
+    [reconnectEdgeAction],
+  );
+
+  // Delete key removes the selected node (and its edges) - skipped while typing in a form
+  // field, and React Flow's own deleteKeyCode is disabled below to avoid double-handling.
+  useEffect(() => {
+    if (!interactive) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const tag = (document.activeElement?.tagName ?? "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      if (!selectedNodeId) return;
+      removeNode(selectedNodeId);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [interactive, selectedNodeId, removeNode]);
+
   if (!flow) {
     return <div className="flex-1 flex items-center justify-center text-slate-500">No flow loaded.</div>;
   }
@@ -95,8 +126,12 @@ export function Canvas({ interactive = true }: { interactive?: boolean }) {
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={interactive ? onNodesChange : undefined}
         onNodeClick={onNodeClick}
+        onReconnect={interactive ? onReconnect : undefined}
+        edgesReconnectable={interactive}
+        deleteKeyCode={null}
         nodesDraggable={interactive}
         colorMode="dark"
         fitView

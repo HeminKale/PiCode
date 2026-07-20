@@ -18,6 +18,7 @@ export default function CanvasPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [downloadingJava, setDownloadingJava] = useState(false);
 
   useEffect(() => {
     if (flow?.id === params.id) {
@@ -48,6 +49,25 @@ export default function CanvasPage() {
     if (!flow) return;
     await api.saveFlow(flow);
     router.push(`/flow/${flow.id}/run`);
+  }
+
+  async function handleDownloadJava() {
+    if (!flow) return;
+    setDownloadingJava(true);
+    try {
+      const { source, className } = await api.generateJava(flow.id);
+      const blob = new Blob([source], { type: "text/x-java-source" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${className}.java`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setDownloadingJava(false);
+    }
   }
 
   if (loading) {
@@ -85,6 +105,19 @@ export default function CanvasPage() {
           >
             {saved ? "✓ Saved" : saving ? "Saving…" : "💾 Save"}
           </button>
+          <button
+            onClick={handleDownloadJava}
+            disabled={downloadingJava}
+            className="rounded-md bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs font-semibold px-3 py-1.5"
+          >
+            {downloadingJava ? "Generating…" : "⤓ Download Java"}
+          </button>
+          <Link
+            href={`/flow/${flow.id}/history`}
+            className="rounded-md border border-slate-800 hover:border-slate-600 text-slate-300 text-xs font-semibold px-3 py-1.5 flex items-center"
+          >
+            History
+          </Link>
           <Link
             href="/library"
             className="rounded-md border border-slate-800 hover:border-slate-600 text-slate-300 text-xs font-semibold px-3 py-1.5 flex items-center"

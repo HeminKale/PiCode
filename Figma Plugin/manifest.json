@@ -1,0 +1,8 @@
+{
+  "name": "FlowOS Screen Generator",
+  "id": "flowos-screen-generator-2026",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page"
+}

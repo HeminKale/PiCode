@@ -5,6 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { LLMService } from "../llm/llm.service";
 import { GenerateFlowDto } from "./dto/generate-flow.dto";
 import { CreateFlowDto } from "./dto/create-flow.dto";
+import { GENERATE_JAVA_PROCESSOR_SYSTEM_PROMPT } from "./generate-java.prompt";
 
 @Injectable()
 export class FlowsService {
@@ -70,5 +71,22 @@ export class FlowsService {
     await this.getFlow(id);
     await this.prisma.flow.delete({ where: { id } });
     return { deleted: true, id };
+  }
+
+  async generateJavaProcessor(id: string): Promise<{ source: string; className: string }> {
+    const record = await this.getFlow(id);
+    const flow = record.flowJson as unknown as Flow;
+    const className = `${this.toPascalCase(flow.name)}Processor`;
+
+    const userPrompt = `Class name: ${className}\n\nFlow JSON:\n${JSON.stringify({ name: flow.name, description: flow.description, nodes: flow.nodes, edges: flow.edges }, null, 2)}`;
+    const raw = await this.llm.generate(GENERATE_JAVA_PROCESSOR_SYSTEM_PROMPT, userPrompt, { maxTokens: 4000 });
+    const source = raw.replace(/^```(?:java)?\s*/i, "").replace(/```\s*$/i, "").trim();
+
+    return { source, className };
+  }
+
+  private toPascalCase(name: string): string {
+    const words = name.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+    return words.map((w) => w[0].toUpperCase() + w.slice(1)).join("") || "Flow";
   }
 }
