@@ -1,0 +1,42 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+// Using the legacy CommonJS-compatible generator, not Prisma 7's new
+// ESM-only "prisma-client" provider — NestJS here has no "type": "module"
+// and importing an ESM-only generated client would throw ERR_REQUIRE_ESM.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  // No `url` here — Prisma 7 removed it from schema.prisma entirely.
+  // The runtime client gets its connection via a driver adapter
+  // (@prisma/adapter-pg) constructed explicitly in PrismaService.
+  provider = "postgresql"
+}
+
+model Flow {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  version     Int      @default(1)
+  flowJson    Json
+  tags        String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  runs FlowRun[]
+}
+
+model FlowRun {
+  id        String    @id @default(cuid())
+  flowId    String
+  flow      Flow      @relation(fields: [flowId], references: [id])
+  status    String    @default("queued")
+  inputs    Json      @default("{}")
+  nodeLogs  Json      @default("[]")
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+}

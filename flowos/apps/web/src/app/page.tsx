@@ -1,63 +1,99 @@
-import Image from "next/image";
+"use client";
+
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { api } from "@/lib/api";
+import { useFlowStore } from "@/store/flowStore";
 
 export default function Home() {
+  const router = useRouter();
+  const setFlow = useFlowStore((s) => s.setFlow);
+  const [prompt, setPrompt] = useState("");
+  const [context, setContext] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [recent, setRecent] = useState<Awaited<ReturnType<typeof api.listFlows>>>([]);
+
+  useEffect(() => {
+    api.listFlows().then((flows) => setRecent(flows.slice(0, 5))).catch(() => {});
+  }, []);
+
+  async function handleGenerate() {
+    if (prompt.trim().length < 5) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const { flow } = await api.generateFlow(prompt, context || undefined);
+      setFlow(flow);
+      router.push(`/flow/${flow.id}/canvas`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate flow");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <div className="flex flex-col flex-1 bg-[#0a0a0f] text-slate-100">
+      <main className="flex-1 flex flex-col items-center justify-center px-6 py-16">
+        <div className="w-full max-w-2xl">
+          <div className="text-center mb-8">
+            <div className="inline-block text-[10px] font-bold tracking-widest uppercase text-violet-300 bg-violet-950 border border-violet-700 rounded-full px-3 py-1 mb-3">
+              A1 + B1 + D1 · FlowOS
+            </div>
+            <h1 className="text-3xl font-extrabold tracking-tight mb-2">FlowOS</h1>
+            <p className="text-slate-400 text-sm">Describe a business process. Get a working automation flow.</p>
+          </div>
+
+          <textarea
+            className="w-full rounded-lg border border-slate-800 bg-[#13131a] p-4 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-violet-500 resize-none"
+            rows={3}
+            placeholder="Process today's loan applications — get from DB, check credit score, auto-approve above 700, notify team on Slack"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+          />
+          <textarea
+            className="mt-2 w-full rounded-lg border border-slate-800 bg-[#13131a] p-3 text-xs text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-violet-500 resize-none"
+            rows={2}
+            placeholder="Optional context — table names, API docs, column names..."
+            value={context}
+            onChange={(e) => setContext(e.target.value)}
+          />
+
+          {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+
+          <button
+            onClick={handleGenerate}
+            disabled={loading || prompt.trim().length < 5}
+            className="mt-4 w-full rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3 text-sm transition-colors"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            {loading ? "Generating flow…" : "Generate"}
+          </button>
+
+          {recent.length > 0 && (
+            <div className="mt-10">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Recent flows</div>
+              <div className="flex flex-col gap-2">
+                {recent.map((f) => (
+                  <Link
+                    key={f.id}
+                    href={`/flow/${f.id}/canvas`}
+                    className="rounded-lg border border-slate-800 bg-[#13131a] px-4 py-2 text-sm hover:border-slate-600 transition-colors"
+                  >
+                    <div className="font-medium text-slate-100">{f.name}</div>
+                    {f.description && <div className="text-xs text-slate-500 truncate">{f.description}</div>}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="mt-6 text-center">
+            <Link href="/library" className="text-xs text-slate-500 hover:text-slate-300">
+              View flow library →
+            </Link>
+          </div>
         </div>
       </main>
     </div>
