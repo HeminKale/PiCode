@@ -31,7 +31,9 @@ export class LLMService {
     const userPrompt = context ? `${prompt}\n\nContext:\n${context}` : prompt;
 
     const content = await this.generate(GENERATE_FLOW_SYSTEM_PROMPT, userPrompt, {
-      maxTokens: 3000,
+      // A complete graph contains many nested node configs. Leave room for the
+      // entire JSON document instead of accepting a syntactically truncated flow.
+      maxTokens: 8000,
       jsonMode: true,
     });
 
