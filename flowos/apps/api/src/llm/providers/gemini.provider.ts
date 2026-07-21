@@ -16,7 +16,7 @@ export class GeminiProvider implements ILLMProvider {
   async generate(request: LLMRequest): Promise<LLMResponse> {
     const model = process.env.GEMINI_MODEL || "gemini-3.5-flash";
     const thinkingConfig = request.jsonMode
-      ? model.startsWith("gemini-2.5")
+      ? model.startsWith("gemini-3.5")
         ? { thinkingBudget: 0 }
         : { thinkingLevel: ThinkingLevel.LOW }
       : undefined;
