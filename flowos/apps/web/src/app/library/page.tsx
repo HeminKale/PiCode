@@ -16,7 +16,11 @@ export default function LibraryPage() {
     api.listFlows().then(setFlows).finally(() => setLoading(false));
   }
 
-  useEffect(refresh, []);
+  useEffect(() => {
+    let active = true;
+    api.listFlows().then((nextFlows) => { if (active) setFlows(nextFlows); }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
 
   async function handleDelete(id: string) {
     await api.deleteFlow(id);
@@ -85,6 +89,14 @@ export default function LibraryPage() {
                 >
                   Run
                 </Link>
+                {f.isPublished && (
+                  <Link
+                    href={`/app/${f.id}`}
+                    className="text-xs bg-emerald-800 hover:bg-emerald-700 px-2 py-1 rounded text-white"
+                  >
+                    Open Application
+                  </Link>
+                )}
                 <button
                   onClick={() => handleDelete(f.id)}
                   className="text-xs bg-red-950 hover:bg-red-900 text-red-400 px-2 py-1 rounded ml-auto"

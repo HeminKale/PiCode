@@ -15,24 +15,18 @@ export default function CanvasPage() {
   const setFlow = useFlowStore((s) => s.setFlow);
   const updateFlowMetadata = useFlowStore((s) => s.updateFlowMetadata);
 
-  const [loading, setLoading] = useState(!flow || flow.id !== params.id);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [notFound, setNotFound] = useState(false);
   const [downloadingJava, setDownloadingJava] = useState(false);
 
   useEffect(() => {
-    if (flow?.id === params.id) {
-      setLoading(false);
-      return;
-    }
+    if (flow?.id === params.id) return;
     api
       .getFlow(params.id)
       .then((res) => setFlow(res.flowJson))
-      .catch(() => setNotFound(true))
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.id]);
+      .catch(() => setNotFound(true));
+  }, [flow?.id, params.id, setFlow]);
 
   async function handleSave() {
     if (!flow) return;
@@ -71,7 +65,7 @@ export default function CanvasPage() {
     }
   }
 
-  if (loading) {
+  if (!notFound && (!flow || flow.id !== params.id)) {
     return <div className="flex-1 flex items-center justify-center text-slate-500">Loading flow…</div>;
   }
   if (notFound || !flow) {
@@ -122,8 +116,16 @@ export default function CanvasPage() {
             href={`/flow/${flow.id}/builder`}
             className="rounded-md border border-slate-800 hover:border-slate-600 text-slate-300 text-xs font-semibold px-3 py-1.5 flex items-center"
           >
-            Open Page Builder
+            {flow.nodes.some((node) => node.type === "COMPONENT") ? "Edit Page" : "Open Page Builder"}
           </Link>
+          {flow.isPublished && (
+            <Link
+              href={`/app/${flow.id}`}
+              className="rounded-md border border-emerald-800 hover:border-emerald-500 text-emerald-300 text-xs font-semibold px-3 py-1.5 flex items-center"
+            >
+              Open Application
+            </Link>
+          )}
           <Link
             href={`/flow/${flow.id}/history`}
             className="rounded-md border border-slate-800 hover:border-slate-600 text-slate-300 text-xs font-semibold px-3 py-1.5 flex items-center"

@@ -4,6 +4,13 @@ import { PrismaService } from "../prisma/prisma.service";
 import { LLMService } from "../llm/llm.service";
 
 const ARTIFACT_KINDS = new Set(["display", "java"]);
+const FORBIDDEN_DISPLAY_SOURCE = /\b(fetch|XMLHttpRequest|WebSocket)\s*\(|\b(localStorage|sessionStorage)\b|document\.cookie|\bwindow\.top\b|\btop\.location\b|\blocation\.(href|assign|replace)\b|\bwindow\.location\b|<link\b|@import\b/i;
+
+export function assertSafeDisplaySource(sourceCode: string) {
+  if (FORBIDDEN_DISPLAY_SOURCE.test(sourceCode)) {
+    throw new BadRequestException("Display bundles cannot use network, storage, navigation, or external stylesheet APIs");
+  }
+}
 
 @Injectable()
 export class ArtifactsService {
@@ -13,10 +20,7 @@ export class ArtifactsService {
     // Display artifacts run in an opaque-origin sandbox. Keep the authoring contract as
     // narrow as the runtime contract too: bundles are self-contained and cannot use host
     // storage, navigation, network APIs, or external stylesheets.
-    const forbidden = /\b(fetch|XMLHttpRequest|WebSocket)\s*\(|\b(localStorage|sessionStorage)\b|document\.cookie|\b(window\.)?(top|location)\b|<link\b|@import\b/i;
-    if (forbidden.test(sourceCode)) {
-      throw new BadRequestException("Display bundles cannot use network, storage, navigation, or external stylesheet APIs");
-    }
+    assertSafeDisplaySource(sourceCode);
   }
   async createDraft(flowId: string, nodeId: string, kind: string, sourceCode: string) {
     const normalized = this.kind(kind);
