@@ -41,12 +41,17 @@ export class GeminiProvider implements ILLMProvider {
     });
 
     const candidate = response.candidates?.[0];
-    if (candidate?.finishReason !== "STOP") {
-      this.logger.warn(
-        `Gemini generation ended with ${candidate?.finishReason ?? "unknown"}` +
-          (candidate?.finishMessage ? `: ${candidate.finishMessage}` : ""),
-      );
-    }
+    const usage = response.usageMetadata;
+    // Logged unconditionally while we're chasing truncated flow-generation output:
+    // this is the only way to tell "thinking ate the budget" (high thoughtsTokenCount,
+    // finishReason MAX_TOKENS) apart from a safety/recitation stop or a lower real
+    // per-request cap than maxOutputTokens implies.
+    this.logger.warn(
+      `Gemini finishReason=${candidate?.finishReason ?? "unknown"} ` +
+        `prompt=${usage?.promptTokenCount ?? "?"} thoughts=${usage?.thoughtsTokenCount ?? "?"} ` +
+        `candidates=${usage?.candidatesTokenCount ?? "?"} total=${usage?.totalTokenCount ?? "?"}` +
+        (candidate?.finishMessage ? ` message=${candidate.finishMessage}` : ""),
+    );
 
     return {
       content: response.text ?? "",
