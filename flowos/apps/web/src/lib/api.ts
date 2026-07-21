@@ -42,18 +42,24 @@ export const api = {
       "/flows",
     ),
   listApps: () => request<Array<{ id: string; name: string; description: string | null; icon?: string | null; category?: string | null }>>("/flows/apps"),
+  listComponentFlows: () => request<Array<{ id: string; name: string; description: string | null; icon?: string | null; category?: string | null }>>("/flows/components"),
 
-  getFlow: (id: string) => request<{ id: string; flowJson: Flow }>(`/flows/${id}`),
+  getFlow: (id: string) => request<{ id: string; flowJson: Flow; isPublished: boolean }>(`/flows/${id}`),
 
   deleteFlow: (id: string) => request<{ deleted: true; id: string }>(`/flows/${id}`, { method: "DELETE" }),
 
   runFlow: (id: string) => request<{ runId: string }>(`/flows/${id}/run`, { method: "POST" }),
+  getRun: (runId: string) => request<FlowRun>(`/flows/runs/${runId}`),
   resumeRun: (runId: string, values: Record<string, unknown>) => request<{ runId: string }>(`/flows/runs/${runId}/resume`, { method: "POST", body: JSON.stringify({ values }) }),
 
   listRuns: (id: string) => request<FlowRun[]>(`/flows/${id}/runs`),
 
   generateJava: (id: string) =>
     request<{ source: string; className: string }>(`/flows/${id}/generate-java`, { method: "POST" }),
+  listArtifacts: (flowId: string) => request<Array<{ id: string; nodeId: string; kind: string; version: number; sourceCode: string; status: string; isPublished: boolean; createdAt: string }>>(`/flows/${flowId}/artifacts`),
+  createArtifactDraft: (flowId: string, nodeId: string, sourceCode: string) => request<{ id: string; version: number; sourceCode: string; isPublished: boolean }>(`/flows/${flowId}/artifacts`, { method: "POST", body: JSON.stringify({ nodeId, kind: "display", sourceCode }) }),
+  generateDisplayDraft: (flowId: string, nodeId: string, prompt: string) => request<{ id: string; version: number; sourceCode: string; isPublished: boolean }>(`/flows/${flowId}/artifacts/generate-display`, { method: "POST", body: JSON.stringify({ nodeId, prompt }) }),
+  publishArtifact: (flowId: string, artifactId: string) => request<{ id: string; version: number; isPublished: boolean }>(`/flows/${flowId}/artifacts/${artifactId}/publish`, { method: "POST" }),
   publishedArtifact: (flowId: string, nodeId: string) => request<{ id: string; sourceCode: string; version: number } | null>(`/flows/${flowId}/artifacts/node/${nodeId}/published`),
 };
 

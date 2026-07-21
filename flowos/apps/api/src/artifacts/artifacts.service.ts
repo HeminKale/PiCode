@@ -9,8 +9,18 @@ const ARTIFACT_KINDS = new Set(["display", "java"]);
 export class ArtifactsService {
   constructor(private readonly prisma: PrismaService, private readonly llm: LLMService) {}
   private kind(value: string) { const kind = value.toLowerCase(); if (!ARTIFACT_KINDS.has(kind)) throw new BadRequestException(`Unsupported artifact kind: ${value}`); return kind; }
+  private validateDisplaySource(sourceCode: string) {
+    // Display artifacts run in an opaque-origin sandbox. Keep the authoring contract as
+    // narrow as the runtime contract too: bundles are self-contained and cannot use host
+    // storage, navigation, network APIs, or external stylesheets.
+    const forbidden = /\b(fetch|XMLHttpRequest|WebSocket)\s*\(|\b(localStorage|sessionStorage)\b|document\.cookie|\b(window\.)?(top|location)\b|<link\b|@import\b/i;
+    if (forbidden.test(sourceCode)) {
+      throw new BadRequestException("Display bundles cannot use network, storage, navigation, or external stylesheet APIs");
+    }
+  }
   async createDraft(flowId: string, nodeId: string, kind: string, sourceCode: string) {
     const normalized = this.kind(kind);
+    if (normalized === "display") this.validateDisplaySource(sourceCode);
     for (let attempt = 0; attempt < 3; attempt++) {
       try { return await this.prisma.$transaction(async (tx) => { const latest = await tx.artifact.aggregate({ where: { flowId, nodeId, kind: normalized }, _max: { version: true } }); return tx.artifact.create({ data: { flowId, nodeId, kind: normalized, sourceCode, version: (latest._max.version ?? 0) + 1 } }); }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }); }
       catch (error) { if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002" || attempt === 2) throw error; }

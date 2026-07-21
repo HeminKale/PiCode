@@ -29,6 +29,14 @@ export class FlowsController {
     return this.flowsService.listFlows();
   }
 
+  @Get("apps")
+  @ApiOperation({ summary: "List published business applications" })
+  apps() { return this.flowsService.listPublishedApps(); }
+
+  @Get("components")
+  @ApiOperation({ summary: "List published flows with a published display bundle for Page Builder" })
+  components() { return this.flowsService.listComponentEligibleFlows(); }
+
   @Get(":id")
   @ApiOperation({ summary: "Get a single flow's full JSON" })
   get(@Param("id") id: string) {
@@ -46,10 +54,6 @@ export class FlowsController {
   generateJava(@Param("id") id: string) {
     return this.flowsService.generateJavaProcessor(id);
   }
-
-  @Get("apps")
-  @ApiOperation({ summary: "List published business applications" })
-  apps() { return this.flowsService.listPublishedApps(); }
 
   @Get(":id/viewer.pdf")
   async viewerPdf(@Param("id") id: string, @Res() response: Response) {
