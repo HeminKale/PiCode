@@ -1,4 +1,4 @@
-import { Injectable, BadGatewayException } from "@nestjs/common";
+import { Injectable, BadGatewayException, Logger } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import type { Flow } from "@flowos/types";
 import { LLMFactory } from "./llm.factory";
@@ -6,6 +6,8 @@ import { GENERATE_FLOW_SYSTEM_PROMPT } from "./generate-flow.prompt";
 
 @Injectable()
 export class LLMService {
+  private readonly logger = new Logger(LLMService.name);
+
   constructor(private readonly factory: LLMFactory) {}
 
   async generate(
@@ -35,6 +37,12 @@ export class LLMService {
 
     const parsed = this.parseGeneratedFlow(content);
     if (!parsed) {
+      this.logger.warn(`LLM flow response could not be parsed as JSON (length: ${content.length}).`);
+      // This is intentionally opt-in: generated flows can contain business data,
+      // so raw model output must never be logged in normal production operation.
+      if (process.env.LLM_DEBUG_RESPONSES === "true") {
+        this.logger.warn(`LLM flow response preview: ${JSON.stringify(content.slice(0, 2_000))}`);
+      }
       throw new BadGatewayException("LLM did not return valid JSON for flow generation");
     }
 
@@ -65,9 +73,12 @@ export class LLMService {
   private parseGeneratedFlow(
     content: string,
   ): { name: string; description: string; nodes: Flow["nodes"]; edges: Flow["edges"] } | null {
-    const candidates = [content.trim()];
+    const candidates = new Set([content.trim()]);
     const fencedJson = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1];
-    if (fencedJson) candidates.push(fencedJson.trim());
+    if (fencedJson) candidates.add(fencedJson.trim());
+
+    const objectJson = this.extractFirstJsonObject(content);
+    if (objectJson) candidates.add(objectJson);
 
     for (const candidate of candidates) {
       try {
@@ -85,6 +96,32 @@ export class LLMService {
       } catch {
         // Try the next strictly delimited JSON candidate.
       }
+    }
+
+    return null;
+  }
+
+  /** Returns the first complete JSON object, respecting quoted braces. */
+  private extractFirstJsonObject(content: string): string | null {
+    const start = content.indexOf("{");
+    if (start === -1) return null;
+
+    let depth = 0;
+    let inString = false;
+    let escaping = false;
+
+    for (let index = start; index < content.length; index++) {
+      const character = content[index];
+      if (inString) {
+        if (escaping) escaping = false;
+        else if (character === "\\") escaping = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+
+      if (character === '"') inString = true;
+      else if (character === "{") depth++;
+      else if (character === "}" && --depth === 0) return content.slice(start, index + 1);
     }
 
     return null;
