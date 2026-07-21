@@ -15,10 +15,15 @@ export class GeminiProvider implements ILLMProvider {
 
   async generate(request: LLMRequest): Promise<LLMResponse> {
     const model = process.env.GEMINI_MODEL || "gemini-3.5-flash";
+    // Gemini 2.5 models accept a numeric thinkingBudget; Gemini 3.x models (3, 3.1,
+    // 3.5, ...) replaced that with the thinkingLevel enum and ignore thinkingBudget.
+    // Sending the wrong shape doesn't error — it just leaves thinking at its default
+    // (medium for 3.x), which silently eats most of maxOutputTokens on reasoning
+    // before any JSON gets written, truncating the response.
     const thinkingConfig = request.jsonMode
-      ? model.startsWith("gemini-3.5")
+      ? model.startsWith("gemini-2.5")
         ? { thinkingBudget: 0 }
-        : { thinkingLevel: ThinkingLevel.LOW }
+        : { thinkingLevel: ThinkingLevel.MINIMAL }
       : undefined;
 
     const response = await this.client.models.generateContent({
@@ -29,8 +34,8 @@ export class GeminiProvider implements ILLMProvider {
         temperature: request.temperature ?? 0.7,
         maxOutputTokens: request.maxTokens ?? 2000,
         responseMimeType: request.jsonMode ? "application/json" : undefined,
-        // Workflow JSON is deterministic. Disabling 2.5 Flash thinking preserves
-        // response capacity; Gemini 3 models use their supported LOW setting.
+        // Workflow JSON is deterministic — minimize thinking overhead so the
+        // token budget goes to the actual output, not internal reasoning.
         thinkingConfig,
       },
     });
