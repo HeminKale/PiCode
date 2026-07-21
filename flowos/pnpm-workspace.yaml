@@ -9,3 +9,5 @@ allowBuilds:
   sharp: true
   puppeteer: true
   unrs-resolver: true
+  '@google/genai': true
+  protobufjs: true
