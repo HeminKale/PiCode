@@ -33,7 +33,7 @@ export class LLMService {
     const content = await this.generate(GENERATE_FLOW_SYSTEM_PROMPT, userPrompt, {
       // A complete graph contains many nested node configs. Leave room for the
       // entire JSON document instead of accepting a syntactically truncated flow.
-      maxTokens: 8000,
+      maxTokens: 12000,
       jsonMode: true,
     });
 
