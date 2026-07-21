@@ -13,7 +13,7 @@ export class GeminiProvider implements ILLMProvider {
 
   async generate(request: LLMRequest): Promise<LLMResponse> {
     const response = await this.client.models.generateContent({
-      model: process.env.GEMINI_MODEL || "gemini-2.5-flash-lite",
+      model: process.env.GEMINI_MODEL || "gemini-3.5-flash",
       contents: request.userPrompt,
       config: {
         systemInstruction: request.systemPrompt,
@@ -26,7 +26,7 @@ export class GeminiProvider implements ILLMProvider {
     return {
       content: response.text ?? "",
       tokensUsed: response.usageMetadata?.totalTokenCount ?? 0,
-      model: response.modelVersion ?? process.env.GEMINI_MODEL ?? "gemini-2.5-flash-lite",
+      model: response.modelVersion ?? process.env.GEMINI_MODEL ?? "gemini-3.5-flash",
     };
   }
 }
