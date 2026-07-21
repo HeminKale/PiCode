@@ -33,10 +33,8 @@ export class LLMService {
       jsonMode: true,
     });
 
-    let parsed: { name: string; description: string; nodes: Flow["nodes"]; edges: Flow["edges"] };
-    try {
-      parsed = JSON.parse(content);
-    } catch {
+    const parsed = this.parseGeneratedFlow(content);
+    if (!parsed) {
       throw new BadGatewayException("LLM did not return valid JSON for flow generation");
     }
 
@@ -57,5 +55,38 @@ export class LLMService {
       reasoning:
         "Generated with A1 (data) nodes first, B1 (logic) next, D1 (rules) after that, and U1 (UI) nodes last where needed, per the standard FlowOS layer ordering.",
     };
+  }
+
+  /**
+   * Providers are asked for JSON mode, but a model can still occasionally wrap a
+   * response in a Markdown fence. Accept that presentation-only wrapper without
+   * accepting arbitrary non-JSON output.
+   */
+  private parseGeneratedFlow(
+    content: string,
+  ): { name: string; description: string; nodes: Flow["nodes"]; edges: Flow["edges"] } | null {
+    const candidates = [content.trim()];
+    const fencedJson = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1];
+    if (fencedJson) candidates.push(fencedJson.trim());
+
+    for (const candidate of candidates) {
+      try {
+        const parsed: unknown = JSON.parse(candidate);
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          typeof (parsed as { name?: unknown }).name === "string" &&
+          typeof (parsed as { description?: unknown }).description === "string" &&
+          Array.isArray((parsed as { nodes?: unknown }).nodes) &&
+          Array.isArray((parsed as { edges?: unknown }).edges)
+        ) {
+          return parsed as { name: string; description: string; nodes: Flow["nodes"]; edges: Flow["edges"] };
+        }
+      } catch {
+        // Try the next strictly delimited JSON candidate.
+      }
+    }
+
+    return null;
   }
 }
