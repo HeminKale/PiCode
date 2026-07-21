@@ -3,6 +3,7 @@
 import { useFlowStore } from "@/store/flowStore";
 import { NodeConfigForm } from "./config/NodeConfigForm";
 import { ConditionEditor } from "./config/ConditionEditor";
+import Link from "next/link";
 
 export function ConfigPanel() {
   const flow = useFlowStore((s) => s.flow);
@@ -41,6 +42,12 @@ export function ConfigPanel() {
       </div>
       {node.metadata?.description && (
         <p className="text-xs text-slate-400 mb-3 leading-relaxed">{node.metadata.description}</p>
+      )}
+
+      {node.type === "DISPLAY" && flow && (
+        <Link href={`/flow/${flow.id}/display/${node.id}`} className="mb-3 block rounded bg-violet-700 px-3 py-2 text-center text-xs font-semibold text-white hover:bg-violet-600">
+          Open Display Editor
+        </Link>
       )}
 
       <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1 mt-4">Config</div>

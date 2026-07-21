@@ -32,6 +32,10 @@ export class FlowsService {
       updatedAt: now,
       nodes: dto.nodes as Flow["nodes"],
       edges: dto.edges as Flow["edges"],
+      tags: dto.tags ?? [],
+      icon: dto.icon,
+      category: dto.category,
+      isPublished: dto.isPublished ?? false,
     };
 
     const record = await this.prisma.flow.upsert({
@@ -94,6 +98,14 @@ export class FlowsService {
 
   async listPublishedApps() {
     return this.prisma.flow.findMany({ where: { isPublished: true }, select: { id: true, name: true, description: true, icon: true, category: true, updatedAt: true }, orderBy: { updatedAt: "desc" } });
+  }
+
+  async listComponentEligibleFlows() {
+    return this.prisma.flow.findMany({
+      where: { isPublished: true, artifacts: { some: { kind: "display", isPublished: true } } },
+      select: { id: true, name: true, description: true, icon: true, category: true, updatedAt: true },
+      orderBy: { updatedAt: "desc" },
+    });
   }
 
   async generateViewerPdf(id: string): Promise<Buffer> {

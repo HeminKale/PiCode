@@ -122,7 +122,7 @@ export default function CanvasPage() {
             href={`/flow/${flow.id}/builder`}
             className="rounded-md border border-slate-800 hover:border-slate-600 text-slate-300 text-xs font-semibold px-3 py-1.5 flex items-center"
           >
-            Page Builder
+            Open Page Builder
           </Link>
           <Link
             href={`/flow/${flow.id}/history`}
