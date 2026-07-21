@@ -1,8 +1,10 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
+import { Logger } from "@nestjs/common";
 import { ILLMProvider, LLMRequest, LLMResponse } from "../llm.provider";
 
 export class GeminiProvider implements ILLMProvider {
   name = "gemini";
+  private readonly logger = new Logger(GeminiProvider.name);
   private client: GoogleGenAI;
 
   constructor() {
@@ -20,8 +22,20 @@ export class GeminiProvider implements ILLMProvider {
         temperature: request.temperature ?? 0.7,
         maxOutputTokens: request.maxTokens ?? 2000,
         responseMimeType: request.jsonMode ? "application/json" : undefined,
+        // Gemini 3.5 Flash defaults to medium thinking. A low setting is enough
+        // for deterministic schema generation and reserves the response budget
+        // for the full flow JSON.
+        thinkingConfig: request.jsonMode ? { thinkingLevel: ThinkingLevel.LOW } : undefined,
       },
     });
+
+    const candidate = response.candidates?.[0];
+    if (candidate?.finishReason && candidate.finishReason !== "STOP") {
+      this.logger.warn(
+        `Gemini generation ended with ${candidate.finishReason}` +
+          (candidate.finishMessage ? `: ${candidate.finishMessage}` : ""),
+      );
+    }
 
     return {
       content: response.text ?? "",
