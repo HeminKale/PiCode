@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hmac
 import os
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,6 +29,7 @@ def apply_process_limits(limits: ResourceLimits) -> None:
 
 class AnalyticsHandler(BaseHTTPRequestHandler):
     limits = ResourceLimits.from_environment()
+    shared_secret = os.getenv("ANALYTICS_WORKER_SHARED_SECRET", "")
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
         log_event("http_request", detail=format % args)
@@ -46,6 +48,12 @@ class AnalyticsHandler(BaseHTTPRequestHandler):
             raise CsvProfileError("CSV versions are limited to 10 MB.")
         return self.rfile.read(length)
 
+    def _is_authorized(self) -> bool:
+        if not self.shared_secret:
+            return True
+        provided = self.headers.get("x-analytics-worker-secret", "")
+        return hmac.compare_digest(provided, self.shared_secret)
+
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/healthz":
             self._send_json(HTTPStatus.OK, {"status": "ok", "contractVersion": "analytics.v1", "resourceLimits": self.limits.as_dict()})
@@ -54,6 +62,9 @@ class AnalyticsHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         try:
+            if not self._is_authorized():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized"})
+                return
             if self.path == "/v1/profile":
                 profile = profile_csv(self._read_body())
                 log_event("csv_profiled", dataRowCount=profile["dataRowCount"], columnCount=len(profile["columns"]))
@@ -93,9 +104,10 @@ class AnalyticsHandler(BaseHTTPRequestHandler):
 def run() -> None:
     limits = ResourceLimits.from_environment()
     AnalyticsHandler.limits = limits
+    AnalyticsHandler.shared_secret = os.getenv("ANALYTICS_WORKER_SHARED_SECRET", "")
     apply_process_limits(limits)
-    host = os.getenv("ANALYTICS_WORKER_HOST", "127.0.0.1")
-    port = int(os.getenv("ANALYTICS_WORKER_PORT", "8001"))
+    host = os.getenv("ANALYTICS_WORKER_HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", os.getenv("ANALYTICS_WORKER_PORT", "8001")))
     server = ThreadingHTTPServer((host, port), AnalyticsHandler)
     log_event("worker_started", host=host, port=port, limits=limits.as_dict())
     server.serve_forever()

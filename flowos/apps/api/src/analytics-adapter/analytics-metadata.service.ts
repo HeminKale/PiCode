@@ -25,6 +25,8 @@ type ModelEvaluationRow = { id: string; model_version_id: string; algorithm: Ana
 type PredictionScenarioRow = { id: string; project_id: string; model_version_id: string; mode: AnalyticsPredictionMode; horizon_weeks: 4; created_at: string };
 type PredictionRunRow = { id: string; project_id: string; scenario_id: string; model_version_id: string; prediction_artifact: StorageObjectRef; status: PredictionContract["status"]; output_summary: PredictionOutputSummary | null; created_at: string };
 type AuditEventRow = { id: string; workspace_id: string; project_id: string; action: string; resource_type: string; resource_id: string | null; actor_type: "service" | "system" | "user"; details: Record<string, unknown>; created_at: string };
+export type AnalyticsWorkspaceMember = { workspaceId: string; actorId: string; role: "owner" | "admin" | "manager" | "analyst" | "business_user" | "viewer" };
+export type AnalyticsProjectMember = { projectId: string; actorId: string; role: "owner" | "admin" | "manager" | "analyst" | "business_user" | "viewer" };
 
 @Injectable()
 export class AnalyticsMetadataService {
@@ -104,10 +106,35 @@ export class AnalyticsMetadataService {
     return rows.map((row) => this.toProject(row));
   }
 
-  async recordAuditEvent(input: { workspaceId: string; projectId: string; action: string; resourceType: string; resourceId?: string; details?: Record<string, unknown> }): Promise<void> {
+  async getWorkspaceMember(workspaceId: string, actorId: string): Promise<AnalyticsWorkspaceMember | undefined> {
+    const query = new URLSearchParams({ select: "workspace_id,actor_id,role", workspace_id: `eq.${workspaceId}`, actor_id: `eq.${actorId}`, status: "eq.active", limit: "1" });
+    const rows = await this.request<Array<{ workspace_id: string; actor_id: string; role: AnalyticsWorkspaceMember["role"] }>>(`analytics_workspace_members?${query}`);
+    return rows[0] ? { workspaceId: rows[0].workspace_id, actorId: rows[0].actor_id, role: rows[0].role } : undefined;
+  }
+
+  async getProjectMember(projectId: string, actorId: string): Promise<AnalyticsProjectMember | undefined> {
+    const query = new URLSearchParams({ select: "project_id,actor_id,role", project_id: `eq.${projectId}`, actor_id: `eq.${actorId}`, status: "eq.active", limit: "1" });
+    const rows = await this.request<Array<{ project_id: string; actor_id: string; role: AnalyticsProjectMember["role"] }>>(`analytics_project_members?${query}`);
+    return rows[0] ? { projectId: rows[0].project_id, actorId: rows[0].actor_id, role: rows[0].role } : undefined;
+  }
+
+  async getProjectWorkspaceId(projectId: string): Promise<string | undefined> {
+    const query = new URLSearchParams({ select: "workspace_id", id: `eq.${projectId}`, limit: "1" });
+    const rows = await this.request<Array<{ workspace_id: string }>>(`analytics_projects?${query}`);
+    return rows[0]?.workspace_id;
+  }
+
+  async createProjectMembership(projectId: string, actorId: string): Promise<void> {
+    await this.request("analytics_project_members", {
+      method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify({ id: randomUUID(), project_id: projectId, actor_id: actorId, role: "owner", status: "active" }),
+    });
+  }
+
+  async recordAuditEvent(input: { workspaceId: string; projectId: string; action: string; resourceType: string; resourceId?: string; actorId?: string; details?: Record<string, unknown> }): Promise<void> {
     await this.request("analytics_audit_events", {
       method: "POST",
-      body: JSON.stringify({ id: randomUUID(), workspace_id: input.workspaceId, project_id: input.projectId, action: input.action, resource_type: input.resourceType, resource_id: input.resourceId ?? null, actor_type: "service", details: input.details ?? {} }),
+      body: JSON.stringify({ id: randomUUID(), workspace_id: input.workspaceId, project_id: input.projectId, action: input.action, resource_type: input.resourceType, resource_id: input.resourceId ?? null, actor_type: input.actorId ? "user" : "service", actor_id: input.actorId ?? null, details: input.details ?? {} }),
     });
   }
 
@@ -129,6 +156,57 @@ export class AnalyticsMetadataService {
     const query = new URLSearchParams({ select: "id,workspace_id,project_id,action,resource_type,resource_id,actor_type,details,created_at", project_id: `eq.${projectId}`, order: "created_at.desc", limit: "50" });
     const rows = await this.request<AuditEventRow[]>(`analytics_audit_events?${query}`);
     return rows.map((row) => ({ id: row.id, action: row.action, resourceType: row.resource_type, resourceId: row.resource_id ?? undefined, details: row.details ?? {}, createdAt: row.created_at }));
+  }
+
+  async approveModel(projectId: string, modelId: string): Promise<ModelVersionContract> {
+    const [row] = await this.request<ModelVersionRow[]>(`analytics_model_versions?project_id=eq.${projectId}&id=eq.${modelId}&status=eq.succeeded`, { method: "PATCH", body: JSON.stringify({ is_approved: true, approved_at: new Date().toISOString() }) });
+    if (!row) throw new NotFoundException("A completed model version was not found in this project.");
+    return this.toModelVersion(row);
+  }
+
+  async createInitialDriftReport(projectId: string, modelVersionId: string, datasetVersionId: string, fingerprint: string): Promise<void> {
+    await this.request("analytics_drift_reports", {
+      method: "POST",
+      body: JSON.stringify({ id: randomUUID(), project_id: projectId, model_version_id: modelVersionId, dataset_version_id: datasetVersionId, status: "baseline_captured", baseline_fingerprint: fingerprint, report: { status: "baseline_captured", note: "Baseline metadata captured. A trusted scheduled comparison worker is not deployed." } }),
+    });
+  }
+
+  async listDriftReports(projectId: string): Promise<Array<{ id: string; modelVersionId: string; datasetVersionId: string; status: string; createdAt: string; report: Record<string, unknown> }>> {
+    const query = new URLSearchParams({ select: "id,model_version_id,dataset_version_id,status,report,created_at", project_id: `eq.${projectId}`, order: "created_at.desc", limit: "50" });
+    const rows = await this.request<Array<{ id: string; model_version_id: string; dataset_version_id: string; status: string; report: Record<string, unknown>; created_at: string }>>(`analytics_drift_reports?${query}`);
+    return rows.map((row) => ({ id: row.id, modelVersionId: row.model_version_id, datasetVersionId: row.dataset_version_id, status: row.status, report: row.report ?? {}, createdAt: row.created_at }));
+  }
+
+  async listRetentionPolicies(projectId: string): Promise<Array<{ artifactKind: string; retentionDays: number; updatedAt: string }>> {
+    const query = new URLSearchParams({ select: "artifact_kind,retention_days,updated_at", project_id: `eq.${projectId}`, order: "artifact_kind.asc" });
+    const rows = await this.request<Array<{ artifact_kind: string; retention_days: number; updated_at: string }>>(`analytics_retention_policies?${query}`);
+    return rows.map((row) => ({ artifactKind: row.artifact_kind, retentionDays: row.retention_days, updatedAt: row.updated_at }));
+  }
+
+  async updateRetentionPolicy(projectId: string, artifactKind: string, retentionDays: number): Promise<{ artifactKind: string; retentionDays: number; updatedAt: string }> {
+    const [row] = await this.request<Array<{ artifact_kind: string; retention_days: number; updated_at: string }>>(`analytics_retention_policies?project_id=eq.${projectId}&artifact_kind=eq.${artifactKind}`, { method: "PATCH", body: JSON.stringify({ retention_days: retentionDays, updated_at: new Date().toISOString() }) });
+    if (!row) throw new NotFoundException("Analytics retention policy was not found in this project.");
+    return { artifactKind: row.artifact_kind, retentionDays: row.retention_days, updatedAt: row.updated_at };
+  }
+
+  async listOperations(projectId: string): Promise<Array<{ id: string; jobType: string; status: string; attemptCount: number; maxAttempts: number; errorSummary?: string; createdAt: string }>> {
+    const query = new URLSearchParams({ select: "id,job_type,status,attempt_count,max_attempts,error_summary,created_at", project_id: `eq.${projectId}`, order: "created_at.desc", limit: "50" });
+    const rows = await this.request<Array<{ id: string; job_type: string; status: string; attempt_count: number; max_attempts: number; error_summary: string | null; created_at: string }>>(`analytics_jobs?${query}`);
+    return rows.map((row) => ({ id: row.id, jobType: row.job_type, status: row.status, attemptCount: row.attempt_count ?? 0, maxAttempts: row.max_attempts ?? 1, errorSummary: row.error_summary ?? undefined, createdAt: row.created_at }));
+  }
+
+  async markJobAttempt(jobId: string): Promise<void> {
+    const rows = await this.request<Array<{ attempt_count: number }>>(`analytics_jobs?select=attempt_count&id=eq.${jobId}`);
+    const attemptCount = (rows[0]?.attempt_count ?? 0) + 1;
+    await this.request(`analytics_jobs?id=eq.${jobId}`, { method: "PATCH", body: JSON.stringify({ status: "running", attempt_count: attemptCount, last_attempt_at: new Date().toISOString() }) });
+  }
+
+  async markJobRetrying(jobId: string, error: string): Promise<void> {
+    await this.request(`analytics_jobs?id=eq.${jobId}`, { method: "PATCH", body: JSON.stringify({ status: "retrying", error_summary: error.slice(0, 1000) }) });
+  }
+
+  async markJobDeadLettered(jobId: string, error: string): Promise<void> {
+    await this.request(`analytics_jobs?id=eq.${jobId}`, { method: "PATCH", body: JSON.stringify({ status: "dead_lettered", error_summary: error.slice(0, 1000), dead_lettered_at: new Date().toISOString(), completed_at: new Date().toISOString() }) });
   }
 
   async createProject(workspaceId: string, name: string, description?: string): Promise<AnalyticsProject> {
@@ -269,7 +347,7 @@ export class AnalyticsMetadataService {
     const now = new Date().toISOString();
     await Promise.all([
       this.markVersionFailed(outputVersionId, error),
-      this.request(`analytics_jobs?id=eq.${workerJobId}`, { method: "PATCH", body: JSON.stringify({ status: "failed", error_summary: error.slice(0, 1000), completed_at: now }) }),
+      this.markJobDeadLettered(workerJobId, error),
       this.request(`analytics_pipeline_runs?id=eq.${runId}`, { method: "PATCH", body: JSON.stringify({ status: "failed", error_summary: error.slice(0, 1000), completed_at: now }) }),
     ]);
   }
@@ -300,7 +378,7 @@ export class AnalyticsMetadataService {
     const now = new Date().toISOString();
     await Promise.all([
       this.request(`analytics_model_versions?id=eq.${modelId}`, { method: "PATCH", body: JSON.stringify({ status: "failed", error_summary: error.slice(0, 1000), completed_at: now }) }),
-      this.request(`analytics_jobs?id=eq.${jobId}`, { method: "PATCH", body: JSON.stringify({ status: "failed", error_summary: error.slice(0, 1000), completed_at: now }) }),
+      this.markJobDeadLettered(jobId, error),
     ]);
   }
 
@@ -342,7 +420,7 @@ export class AnalyticsMetadataService {
     const now = new Date().toISOString();
     await Promise.all([
       this.request(`analytics_prediction_runs?id=eq.${runId}`, { method: "PATCH", body: JSON.stringify({ status: "failed", error_summary: error.slice(0, 1000), completed_at: now }) }),
-      this.request(`analytics_jobs?id=eq.${jobId}`, { method: "PATCH", body: JSON.stringify({ status: "failed", error_summary: error.slice(0, 1000), completed_at: now }) }),
+      this.markJobDeadLettered(jobId, error),
     ]);
   }
 
