@@ -28,6 +28,7 @@ existing Prisma manual-migration workaround. `002` is intentionally not created 
 this branch uses API-side service-role access and has not implemented the
 authenticated-user Storage/RLS policy requirements that must be reviewed together.
 
-The project owner reports that `001` and `003` have already been manually applied.
-`004` is awaiting manual review and application before an A2 pipeline run can persist a
-processed DatasetVersion.
+The project owner reports that `001`, `003`, `004`, and `005` have already been
+manually applied. Do not edit or rerun them. The four private Storage buckets
+(`analytics-raw`, `analytics-processed`, `analytics-model`, and
+`analytics-prediction`) already exist.

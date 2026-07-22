@@ -6,6 +6,8 @@ export type AnalyticsArtifactKind = "raw" | "processed" | "model" | "prediction"
 export type DatasetVersionStatus = "uploading" | "profiled" | "processing" | "processed" | "failed";
 export type AnalyticsJobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type AnalyticsJobType = "PROFILE_DATASET" | "PROCESS_DATASET" | "TRAIN_MODEL" | "PREDICT";
+export type AnalyticsModelFamily = "ridge_linear" | "poisson_glm" | "histogram_gradient_boosting";
+export type AnalyticsPredictionMode = "historical_what_if" | "future_forecast";
 
 export interface AnalyticsProject {
   id: string;
@@ -156,16 +158,102 @@ export interface FeatureSetContract {
 export interface ModelVersionContract {
   id: string;
   projectId: string;
+  trainingDatasetVersionId: string;
   featureSetVersion: string;
   artifact: StorageObjectRef;
-  metrics: Record<string, number>;
+  modelFamily: AnalyticsModelFamily;
+  status: AnalyticsJobStatus;
+  isApproved: boolean;
+  metrics: ModelMetrics;
+  dataFingerprint: string;
+  createdAt: string;
+}
+
+export interface ModelMetrics {
+  wape: number;
+  mae: number;
+  rmse: number;
+  r2: number;
+  bias: number;
+}
+
+export interface ModelEvaluationContract {
+  id: string;
+  modelVersionId: string;
+  algorithm: AnalyticsModelFamily;
+  metrics: ModelMetrics;
+  segmentErrors: Record<string, ModelMetrics>;
+  selected: boolean;
+  createdAt: string;
+}
+
+export interface TrainingThresholds {
+  maxWape?: number;
+}
+
+export interface ModelTrainingRequest {
+  contractVersion: typeof ANALYTICS_CONTRACT_VERSION;
+  trainingDatasetVersionId: string;
+  target: "sales_units";
+  candidateAlgorithms: AnalyticsModelFamily[];
+  includeBaselineUnits?: boolean;
+  validationWeeks?: number;
+  thresholds?: TrainingThresholds;
+}
+
+export interface ForecastRowInput {
+  productId: string;
+  customerId: string;
+  weekNum: string;
+  consumerPrice: number;
+  numStores: number;
+  promotionIntensity: number;
+  tactics?: Record<string, number | null | undefined>;
+}
+
+export interface HistoricalWhatIfInput {
+  mode: "historical_what_if";
+  customerId: string;
+  productIds?: string[];
+  weekNums?: string[];
+  promotionIntensity: number;
+  tactics?: Record<string, number | null | undefined>;
+}
+
+export interface FutureForecastInput {
+  mode: "future_forecast";
+  rows: ForecastRowInput[];
+}
+
+export type PredictionRequest = HistoricalWhatIfInput | FutureForecastInput;
+
+export interface PredictionScenarioContract {
+  id: string;
+  projectId: string;
+  modelVersionId: string;
+  mode: AnalyticsPredictionMode;
+  horizonWeeks: 4;
+  createdAt: string;
+}
+
+export interface PredictionOutputSummary {
+  rowCount: number;
+  totalBaselineUnits: number;
+  totalPromotedUnits: number;
+  totalIncrementalUnits: number;
+  weightedPercentIncrement: number;
+  qualityFlags: string[];
 }
 
 export interface PredictionContract {
   id: string;
   projectId: string;
+  modelVersionId: string;
+  scenarioId: string;
   artifact: StorageObjectRef;
-  horizonWeeks: 4;
+  status: AnalyticsJobStatus;
+  summary?: PredictionOutputSummary;
+  createdAt: string;
 }
 
 export interface AnalyticsJob {
@@ -193,7 +281,7 @@ export interface CsvUploadMetadata {
 }
 
 export interface ValidationIssue {
-  code: "invalid_file_type" | "file_too_large" | "invalid_file_name" | "invalid_column_mapping" | "invalid_pipeline";
+  code: "invalid_file_type" | "file_too_large" | "invalid_file_name" | "invalid_column_mapping" | "invalid_pipeline" | "invalid_model_training" | "invalid_prediction";
   message: string;
 }
 
@@ -282,4 +370,49 @@ export function validatePipelineDefinition(definition: AnalyticsPipelineDefiniti
     issues.push({ code: "invalid_pipeline", message: "The final pipeline node must be OUTPUT_DATASET." });
   }
   return issues.concat(validateColumnMappings(definition.columnMappings));
+}
+
+export function validateModelTrainingRequest(request: ModelTrainingRequest): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (request.contractVersion !== ANALYTICS_CONTRACT_VERSION || request.target !== "sales_units") {
+    issues.push({ code: "invalid_model_training", message: "Training must use analytics.v1 with sales_units as the target." });
+  }
+  if (!request.trainingDatasetVersionId) {
+    issues.push({ code: "invalid_model_training", message: "A processed training dataset version is required." });
+  }
+  if (!request.candidateAlgorithms.length || request.candidateAlgorithms.some((algorithm) => !["ridge_linear", "poisson_glm", "histogram_gradient_boosting"].includes(algorithm))) {
+    issues.push({ code: "invalid_model_training", message: "Choose one or more fixed reviewed model algorithms." });
+  }
+  if (request.validationWeeks !== undefined && (!Number.isInteger(request.validationWeeks) || request.validationWeeks < 1 || request.validationWeeks > 52)) {
+    issues.push({ code: "invalid_model_training", message: "Validation weeks must be an integer from 1 to 52." });
+  }
+  if (request.thresholds?.maxWape !== undefined && (!Number.isFinite(request.thresholds.maxWape) || request.thresholds.maxWape < 0 || request.thresholds.maxWape > 1000)) {
+    issues.push({ code: "invalid_model_training", message: "Maximum WAPE must be a non-negative percentage." });
+  }
+  return issues;
+}
+
+function isPromotionIntensity(value: number): boolean {
+  return Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+export function validatePredictionRequest(request: PredictionRequest): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (request.mode === "historical_what_if") {
+    if (!request.customerId || !isPromotionIntensity(request.promotionIntensity)) {
+      issues.push({ code: "invalid_prediction", message: "Historical what-if requires a customer and 0–1 promotion intensity." });
+    }
+    return issues;
+  }
+  if (!Array.isArray(request.rows) || request.rows.length !== 4) {
+    issues.push({ code: "invalid_prediction", message: "Future forecasts require exactly four weekly rows entered in the app." });
+    return issues;
+  }
+  for (const row of request.rows) {
+    if (!row.productId || !row.customerId || !/^\d{4}-(?:W)?\d{1,2}$/.test(row.weekNum) || !Number.isFinite(row.consumerPrice) || !Number.isFinite(row.numStores) || !isPromotionIntensity(row.promotionIntensity)) {
+      issues.push({ code: "invalid_prediction", message: "Each future forecast row requires product, customer, week, price, availability, and 0–1 promotion intensity." });
+      break;
+    }
+  }
+  return issues;
 }

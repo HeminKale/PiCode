@@ -1,12 +1,14 @@
 import { BadRequestException, Body, Controller, Get, Headers, Param, Post, UploadedFile, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
-import { MAX_CSV_BYTES, type AnalyticsPipelineDefinition } from "@flowos/analytics-contracts";
-import { AnalyticsService, type PipelineSourceBinding, type UploadedCsv } from "./analytics.service";
+import { MAX_CSV_BYTES, type AnalyticsPipelineDefinition, type ModelTrainingRequest } from "@flowos/analytics-contracts";
+import { AnalyticsService, type PipelineSourceBinding, type PredictionInput, type UploadedCsv } from "./analytics.service";
 
 type CreateProjectBody = { name?: string; description?: string };
 type UploadDatasetBody = { datasetName?: string };
 type CreatePipelineBody = { name?: string; description?: string; definition?: AnalyticsPipelineDefinition; isApproved?: boolean };
 type RunPipelineBody = { sources?: PipelineSourceBinding[]; outputDatasetName?: string };
+type TrainModelBody = Partial<ModelTrainingRequest>;
+type PredictBody = PredictionInput;
 
 @Controller("analytics")
 export class AnalyticsController {
@@ -57,6 +59,31 @@ export class AnalyticsController {
   @Get("projects/:projectId/quality-reports")
   listQualityReports(@Headers("x-workspace-id") workspaceId: string | undefined, @Param("projectId") projectId: string) {
     return this.analytics.listQualityReports(this.workspaceId(workspaceId), projectId);
+  }
+
+  @Get("projects/:projectId/models")
+  listModels(@Headers("x-workspace-id") workspaceId: string | undefined, @Param("projectId") projectId: string) {
+    return this.analytics.listModelVersions(this.workspaceId(workspaceId), projectId);
+  }
+
+  @Get("projects/:projectId/model-evaluations")
+  listModelEvaluations(@Headers("x-workspace-id") workspaceId: string | undefined, @Param("projectId") projectId: string) {
+    return this.analytics.listModelEvaluations(this.workspaceId(workspaceId), projectId);
+  }
+
+  @Post("projects/:projectId/models")
+  trainModel(@Headers("x-workspace-id") workspaceId: string | undefined, @Param("projectId") projectId: string, @Body() body: TrainModelBody) {
+    return this.analytics.trainModel(this.workspaceId(workspaceId), projectId, body as ModelTrainingRequest);
+  }
+
+  @Get("projects/:projectId/predictions")
+  listPredictions(@Headers("x-workspace-id") workspaceId: string | undefined, @Param("projectId") projectId: string) {
+    return this.analytics.listPredictionRuns(this.workspaceId(workspaceId), projectId);
+  }
+
+  @Post("projects/:projectId/models/:modelVersionId/predictions")
+  predict(@Headers("x-workspace-id") workspaceId: string | undefined, @Param("projectId") projectId: string, @Param("modelVersionId") modelVersionId: string, @Body() body: PredictBody) {
+    return this.analytics.predict(this.workspaceId(workspaceId), projectId, modelVersionId, body);
   }
 
   @Post("projects/:projectId/pipelines/:pipelineVersionId/runs")

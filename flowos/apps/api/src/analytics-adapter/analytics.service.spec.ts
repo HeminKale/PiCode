@@ -21,9 +21,20 @@ describe("AnalyticsService upload validation", () => {
     createPipelineRun: jest.fn(),
     markPipelineRunSucceeded: jest.fn(),
     markPipelineRunFailed: jest.fn(),
+    getProcessedDatasetVersion: jest.fn(),
+    createModelTraining: jest.fn(),
+    markModelTrainingSucceeded: jest.fn(),
+    markModelTrainingFailed: jest.fn(),
+    listModelVersions: jest.fn(),
+    listModelEvaluations: jest.fn(),
+    getModelVersion: jest.fn(),
+    createPredictionRun: jest.fn(),
+    markPredictionSucceeded: jest.fn(),
+    markPredictionFailed: jest.fn(),
+    listPredictionRuns: jest.fn(),
   };
   const storage = { uploadImmutable: jest.fn() };
-  const worker = { profileCsv: jest.fn(), processDataset: jest.fn() };
+  const worker = { profileCsv: jest.fn(), processDataset: jest.fn(), trainModel: jest.fn(), predict: jest.fn() };
   const service = new AnalyticsService(metadata as never, storage as never, worker as never);
 
   beforeEach(() => jest.resetAllMocks());
@@ -83,5 +94,29 @@ describe("AnalyticsService upload validation", () => {
     expect(run.status).toBe("succeeded");
     expect(worker.processDataset).toHaveBeenCalledWith(expect.objectContaining({ type: "PROCESS_DATASET", inputArtifacts: [{ bucket: "analytics-raw", path: "sales.csv", artifactKind: "raw" }] }));
     expect(metadata.markPipelineRunSucceeded).toHaveBeenCalledWith(expect.objectContaining({ projectId: "project_1", outputByteSize: 42 }));
+  });
+
+  it("rejects invalid model training before reading a processed dataset", async () => {
+    await expect(service.trainModel("workspace_1", "project_1", { contractVersion: "analytics.v1", trainingDatasetVersionId: "processed_1", target: "sales_units", candidateAlgorithms: [] }))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(metadata.getProcessedDatasetVersion).not.toHaveBeenCalled();
+  });
+
+  it("uses Storage references only for fixed-code model training", async () => {
+    metadata.getProcessedDatasetVersion.mockResolvedValue({ id: "processed_1", storage: { bucket: "analytics-processed", path: "features.csv", artifactKind: "processed" } });
+    metadata.createModelTraining.mockResolvedValue({ id: "model_1", status: "running" });
+    worker.trainModel.mockResolvedValue({ modelArtifact: { bucket: "analytics-model", path: "model.json", artifactKind: "model", sha256: "a".repeat(64) }, modelFamily: "ridge_linear", metrics: { wape: 10, mae: 1, rmse: 1, r2: 0.5, bias: 0 }, dataFingerprint: "b".repeat(64), isApproved: true, featureSet: { version: "analytics.feature-set.v1" }, evaluations: [] });
+
+    const result = await service.trainModel("workspace_1", "project_1", { contractVersion: "analytics.v1", trainingDatasetVersionId: "processed_1", target: "sales_units", candidateAlgorithms: ["ridge_linear"] });
+
+    expect(result.status).toBe("succeeded");
+    expect(worker.trainModel).toHaveBeenCalledWith(expect.objectContaining({ type: "TRAIN_MODEL", trainingArtifact: { bucket: "analytics-processed", path: "features.csv", artifactKind: "processed" } }));
+    expect(metadata.markModelTrainingSucceeded).toHaveBeenCalledWith(expect.objectContaining({ modelFamily: "ridge_linear", isApproved: true }));
+  });
+
+  it("requires complete four-week forecasts before creating prediction metadata", async () => {
+    await expect(service.predict("workspace_1", "project_1", "model_1", { mode: "future_forecast", historyDatasetVersionId: "processed_1", rows: [] }))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(metadata.createPredictionRun).not.toHaveBeenCalled();
   });
 });

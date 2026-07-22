@@ -9,7 +9,7 @@ from typing import Any
 from .config import ResourceLimits
 from .contracts import validate_job_envelope
 from .logging import log_event
-from .jobs import process_dataset_job
+from .jobs import predict_job, process_dataset_job, train_model_job
 from .profiling import CsvProfileError, profile_csv
 from .pipeline import PipelineError
 from .storage import StorageError, SupabaseStorage
@@ -69,6 +69,16 @@ class AnalyticsHandler(BaseHTTPRequestHandler):
                 if payload["type"] == "PROCESS_DATASET":
                     result = process_dataset_job(payload, SupabaseStorage())
                     log_event("job_succeeded", jobId=payload["id"], outputArtifact=result["outputArtifact"])
+                    self._send_json(HTTPStatus.OK, {"id": payload["id"], "contractVersion": "analytics.v1", "eventType": "job.succeeded", **result})
+                    return
+                if payload["type"] == "TRAIN_MODEL":
+                    result = train_model_job(payload, SupabaseStorage())
+                    log_event("model_training_succeeded", jobId=payload["id"], modelFamily=result["modelFamily"], approved=result["isApproved"])
+                    self._send_json(HTTPStatus.OK, {"id": payload["id"], "contractVersion": "analytics.v1", "eventType": "job.succeeded", **result})
+                    return
+                if payload["type"] == "PREDICT":
+                    result = predict_job(payload, SupabaseStorage())
+                    log_event("prediction_succeeded", jobId=payload["id"], rowCount=result["summary"]["rowCount"])
                     self._send_json(HTTPStatus.OK, {"id": payload["id"], "contractVersion": "analytics.v1", "eventType": "job.succeeded", **result})
                     return
                 self._send_json(HTTPStatus.ACCEPTED, {"id": payload["id"], "status": "queued", "contractVersion": "analytics.v1", "eventType": "job.accepted"})

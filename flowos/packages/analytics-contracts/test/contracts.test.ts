@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MAX_CSV_BYTES, buildAnalyticsObjectPath, defaultFeatureSet, validateColumnMappings, validateCsvUploadMetadata, validatePipelineDefinition } from "../src/index.js";
+import { MAX_CSV_BYTES, buildAnalyticsObjectPath, defaultFeatureSet, validateColumnMappings, validateCsvUploadMetadata, validateModelTrainingRequest, validatePipelineDefinition, validatePredictionRequest } from "../src/index.js";
 
 test("CSV upload validation enforces file type and size", () => {
   assert.deepEqual(validateCsvUploadMetadata({ fileName: "sales.csv", byteSize: MAX_CSV_BYTES, contentType: "text/csv" }), []);
@@ -35,4 +35,22 @@ test("pipeline validation requires a final output node and prior inputs", () => 
     nodes: [{ id: "output", type: "OUTPUT_DATASET", inputIds: ["missing"], config: {} }],
   });
   assert.equal(issues.some((issue) => issue.code === "invalid_pipeline"), true);
+});
+
+test("model training remains fixed-code and excludes baseline units unless explicitly enabled", () => {
+  assert.deepEqual(validateModelTrainingRequest({
+    contractVersion: "analytics.v1", trainingDatasetVersionId: "processed_1", target: "sales_units",
+    candidateAlgorithms: ["ridge_linear", "poisson_glm"], validationWeeks: 4, thresholds: { maxWape: 30 },
+  }), []);
+  assert.equal(validateModelTrainingRequest({
+    contractVersion: "analytics.v1", trainingDatasetVersionId: "processed_1", target: "sales_units",
+    candidateAlgorithms: ["unreviewed" as never],
+  }).at(0)?.code, "invalid_model_training");
+});
+
+test("future forecasts require a fixed four-week, complete in-app horizon", () => {
+  const row = { productId: "P1", customerId: "C1", weekNum: "2026-30", consumerPrice: 10, numStores: 3, promotionIntensity: 0.5 };
+  assert.deepEqual(validatePredictionRequest({ mode: "future_forecast", rows: [row, { ...row, weekNum: "2026-31" }, { ...row, weekNum: "2026-32" }, { ...row, weekNum: "2026-33" }] }), []);
+  assert.equal(validatePredictionRequest({ mode: "future_forecast", rows: [row] }).at(0)?.code, "invalid_prediction");
+  assert.equal(validatePredictionRequest({ mode: "historical_what_if", customerId: "C1", promotionIntensity: 2 }).at(0)?.code, "invalid_prediction");
 });

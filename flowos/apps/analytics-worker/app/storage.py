@@ -40,12 +40,15 @@ class SupabaseStorage:
             raise StorageError(f"Could not download analytics input: {error}") from error
 
     def upload_immutable(self, artifact: dict[str, Any], payload: bytes) -> dict[str, Any]:
-        headers = self._headers("text/csv")
+        content_type = str(artifact.get("contentType") or "text/csv")
+        if content_type not in {"text/csv", "application/json"}:
+            raise StorageError("Analytics artifacts must be CSV or JSON.")
+        headers = self._headers(content_type)
         headers["x-upsert"] = "false"
         request = Request(self._object_url(str(artifact["bucket"]), str(artifact["path"])), data=payload, headers=headers, method="POST")
         try:
             with urlopen(request, timeout=30):
                 pass
         except (HTTPError, URLError) as error:
-            raise StorageError(f"Could not upload processed dataset: {error}") from error
-        return {**artifact, "sha256": hashlib.sha256(payload).hexdigest()}
+            raise StorageError(f"Could not upload analytics artifact: {error}") from error
+        return {key: value for key, value in {**artifact, "sha256": hashlib.sha256(payload).hexdigest()}.items() if key != "contentType"}

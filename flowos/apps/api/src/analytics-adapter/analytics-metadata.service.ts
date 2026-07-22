@@ -1,6 +1,6 @@
 import { Injectable, InternalServerErrorException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import type { AnalyticsPipelineDefinition, AnalyticsPipelineRun, AnalyticsPipelineTemplate, AnalyticsPipelineVersion, AnalyticsProject, CsvProfile, DataQualityReport, DatasetVersion, StorageObjectRef } from "@flowos/analytics-contracts";
+import type { AnalyticsModelFamily, AnalyticsPipelineDefinition, AnalyticsPipelineRun, AnalyticsPipelineTemplate, AnalyticsPipelineVersion, AnalyticsPredictionMode, AnalyticsProject, CsvProfile, DataQualityReport, DatasetVersion, ModelEvaluationContract, ModelMetrics, ModelVersionContract, PredictionContract, PredictionOutputSummary, PredictionScenarioContract, StorageObjectRef } from "@flowos/analytics-contracts";
 
 type ProjectRow = {
   id: string;
@@ -20,6 +20,10 @@ type DatasetVersionRow = {
 type PipelineTemplateRow = { id: string; project_id: string; name: string; description: string | null; created_at: string; updated_at: string };
 type PipelineVersionRow = { id: string; pipeline_template_id: string; project_id: string; version: number; definition: AnalyticsPipelineDefinition; is_approved: boolean; created_at: string };
 type PipelineRunRow = { id: string; project_id: string; pipeline_version_id: string; status: AnalyticsPipelineRun["status"]; input_dataset_version_ids: string[]; output_dataset_version_id: string | null; worker_job_id: string | null; error_summary: string | null; created_at: string };
+type ModelVersionRow = { id: string; project_id: string; training_dataset_version_id: string; model_family: AnalyticsModelFamily; feature_set: { version: string }; artifact: StorageObjectRef; data_fingerprint: string; selected_metrics: ModelMetrics; is_approved: boolean; status: ModelVersionContract["status"]; created_at: string };
+type ModelEvaluationRow = { id: string; model_version_id: string; algorithm: AnalyticsModelFamily; metrics: ModelMetrics; segment_errors: Record<string, ModelMetrics>; selected: boolean; created_at: string };
+type PredictionScenarioRow = { id: string; project_id: string; model_version_id: string; mode: AnalyticsPredictionMode; horizon_weeks: 4; created_at: string };
+type PredictionRunRow = { id: string; project_id: string; scenario_id: string; model_version_id: string; prediction_artifact: StorageObjectRef; status: PredictionContract["status"]; output_summary: PredictionOutputSummary | null; created_at: string };
 
 @Injectable()
 export class AnalyticsMetadataService {
@@ -75,6 +79,22 @@ export class AnalyticsMetadataService {
 
   private toPipelineRun(row: PipelineRunRow): AnalyticsPipelineRun {
     return { id: row.id, projectId: row.project_id, pipelineVersionId: row.pipeline_version_id, status: row.status, inputDatasetVersionIds: row.input_dataset_version_ids ?? [], outputDatasetVersionId: row.output_dataset_version_id, workerJobId: row.worker_job_id, errorSummary: row.error_summary, createdAt: row.created_at };
+  }
+
+  private toModelVersion(row: ModelVersionRow): ModelVersionContract {
+    return { id: row.id, projectId: row.project_id, trainingDatasetVersionId: row.training_dataset_version_id, featureSetVersion: row.feature_set.version, artifact: row.artifact, modelFamily: row.model_family, status: row.status, isApproved: row.is_approved, metrics: row.selected_metrics, dataFingerprint: row.data_fingerprint, createdAt: row.created_at };
+  }
+
+  private toModelEvaluation(row: ModelEvaluationRow): ModelEvaluationContract {
+    return { id: row.id, modelVersionId: row.model_version_id, algorithm: row.algorithm, metrics: row.metrics, segmentErrors: row.segment_errors ?? {}, selected: row.selected, createdAt: row.created_at };
+  }
+
+  private toPredictionScenario(row: PredictionScenarioRow): PredictionScenarioContract {
+    return { id: row.id, projectId: row.project_id, modelVersionId: row.model_version_id, mode: row.mode, horizonWeeks: row.horizon_weeks, createdAt: row.created_at };
+  }
+
+  private toPredictionRun(row: PredictionRunRow): PredictionContract {
+    return { id: row.id, projectId: row.project_id, modelVersionId: row.model_version_id, scenarioId: row.scenario_id, artifact: row.prediction_artifact, status: row.status, summary: row.output_summary ?? undefined, createdAt: row.created_at };
   }
 
   async listProjects(workspaceId: string): Promise<AnalyticsProject[]> {
@@ -224,6 +244,84 @@ export class AnalyticsMetadataService {
       this.request(`analytics_jobs?id=eq.${workerJobId}`, { method: "PATCH", body: JSON.stringify({ status: "failed", error_summary: error.slice(0, 1000), completed_at: now }) }),
       this.request(`analytics_pipeline_runs?id=eq.${runId}`, { method: "PATCH", body: JSON.stringify({ status: "failed", error_summary: error.slice(0, 1000), completed_at: now }) }),
     ]);
+  }
+
+  async getProcessedDatasetVersion(projectId: string, id: string): Promise<DatasetVersion> {
+    const query = new URLSearchParams({ select: "id,project_id,dataset_id,file_name,byte_size,storage_bucket,storage_path,sha256,status,profile,column_mappings,created_at", project_id: `eq.${projectId}`, id: `eq.${id}`, status: "eq.processed", limit: "1" });
+    const rows = await this.request<DatasetVersionRow[]>(`analytics_dataset_versions?${query}`);
+    if (!rows[0]) throw new NotFoundException("A processed dataset version was not found in this project.");
+    return this.toDatasetVersion(rows[0]);
+  }
+
+  async createModelTraining(input: { projectId: string; trainingDatasetVersionId: string; modelFamily: AnalyticsModelFamily; featureSet: Record<string, unknown>; artifact: StorageObjectRef; jobId: string; modelId: string }): Promise<ModelVersionContract> {
+    await this.request("analytics_jobs", { method: "POST", body: JSON.stringify({ id: input.jobId, project_id: input.projectId, contract_version: "analytics.v1", job_type: "TRAIN_MODEL", status: "running", input_artifacts: [], output_artifacts: [], started_at: new Date().toISOString() }) });
+    const [row] = await this.request<ModelVersionRow[]>("analytics_model_versions", { method: "POST", body: JSON.stringify({ id: input.modelId, project_id: input.projectId, training_dataset_version_id: input.trainingDatasetVersionId, job_id: input.jobId, contract_version: "analytics.v1", model_family: input.modelFamily, feature_set: input.featureSet, artifact: input.artifact, data_fingerprint: "0".repeat(64), selected_metrics: { wape: 0, mae: 0, rmse: 0, r2: 0, bias: 0 }, is_approved: false, status: "running" }) });
+    if (!row) throw new InternalServerErrorException("Analytics model version was not created.");
+    return this.toModelVersion(row);
+  }
+
+  async markModelTrainingSucceeded(input: { projectId: string; modelId: string; jobId: string; trainingDatasetVersionId: string; artifact: StorageObjectRef; modelFamily: AnalyticsModelFamily; featureSet: Record<string, unknown>; metrics: ModelMetrics; dataFingerprint: string; isApproved: boolean; evaluations: Array<{ algorithm: AnalyticsModelFamily; metrics: ModelMetrics; segmentErrors: Record<string, ModelMetrics>; selected: boolean }> }): Promise<void> {
+    const now = new Date().toISOString();
+    await this.request(`analytics_model_versions?id=eq.${input.modelId}`, { method: "PATCH", body: JSON.stringify({ artifact: input.artifact, model_family: input.modelFamily, feature_set: input.featureSet, selected_metrics: input.metrics, data_fingerprint: input.dataFingerprint, is_approved: input.isApproved, status: "succeeded", completed_at: now }) });
+    await this.request(`analytics_jobs?id=eq.${input.jobId}`, { method: "PATCH", body: JSON.stringify({ status: "succeeded", output_artifacts: [input.artifact], completed_at: now }) });
+    await this.request("analytics_lineage", { method: "POST", body: JSON.stringify({ id: randomUUID(), project_id: input.projectId, relationship: "trained_from", input_dataset_version_id: input.trainingDatasetVersionId, job_id: input.jobId, metadata: { modelVersionId: input.modelId } }) });
+    await Promise.all(input.evaluations.map((evaluation) => this.request("analytics_model_evaluations", { method: "POST", body: JSON.stringify({ id: randomUUID(), model_version_id: input.modelId, algorithm: evaluation.algorithm, metrics: evaluation.metrics, segment_errors: evaluation.segmentErrors, selected: evaluation.selected }) })));
+  }
+
+  async markModelTrainingFailed(modelId: string, jobId: string, error: string): Promise<void> {
+    const now = new Date().toISOString();
+    await Promise.all([
+      this.request(`analytics_model_versions?id=eq.${modelId}`, { method: "PATCH", body: JSON.stringify({ status: "failed", error_summary: error.slice(0, 1000), completed_at: now }) }),
+      this.request(`analytics_jobs?id=eq.${jobId}`, { method: "PATCH", body: JSON.stringify({ status: "failed", error_summary: error.slice(0, 1000), completed_at: now }) }),
+    ]);
+  }
+
+  async listModelVersions(projectId: string): Promise<ModelVersionContract[]> {
+    const query = new URLSearchParams({ select: "id,project_id,training_dataset_version_id,model_family,feature_set,artifact,data_fingerprint,selected_metrics,is_approved,status,created_at", project_id: `eq.${projectId}`, order: "created_at.desc" });
+    const rows = await this.request<ModelVersionRow[]>(`analytics_model_versions?${query}`);
+    return rows.map((row) => this.toModelVersion(row));
+  }
+
+  async getModelVersion(projectId: string, id: string): Promise<ModelVersionContract> {
+    const query = new URLSearchParams({ select: "id,project_id,training_dataset_version_id,model_family,feature_set,artifact,data_fingerprint,selected_metrics,is_approved,status,created_at", project_id: `eq.${projectId}`, id: `eq.${id}`, status: "eq.succeeded", limit: "1" });
+    const rows = await this.request<ModelVersionRow[]>(`analytics_model_versions?${query}`);
+    if (!rows[0]) throw new NotFoundException("A completed model version was not found in this project.");
+    return this.toModelVersion(rows[0]);
+  }
+
+  async listModelEvaluations(projectId: string): Promise<ModelEvaluationContract[]> {
+    const query = new URLSearchParams({ select: "id,model_version_id,algorithm,metrics,segment_errors,selected,created_at,analytics_model_versions!inner(project_id)", "analytics_model_versions.project_id": `eq.${projectId}`, order: "created_at.desc" });
+    const rows = await this.request<ModelEvaluationRow[]>(`analytics_model_evaluations?${query}`);
+    return rows.map((row) => this.toModelEvaluation(row));
+  }
+
+  async createPredictionRun(input: { projectId: string; modelVersionId: string; historyDatasetVersionId: string; mode: AnalyticsPredictionMode; scenarioSummary: Record<string, unknown>; predictionArtifact: StorageObjectRef; jobId: string; scenarioId: string; runId: string }): Promise<PredictionContract> {
+    await this.request("analytics_jobs", { method: "POST", body: JSON.stringify({ id: input.jobId, project_id: input.projectId, contract_version: "analytics.v1", job_type: "PREDICT", status: "running", input_artifacts: [], output_artifacts: [], started_at: new Date().toISOString() }) });
+    await this.request("analytics_prediction_scenarios", { method: "POST", body: JSON.stringify({ id: input.scenarioId, project_id: input.projectId, model_version_id: input.modelVersionId, mode: input.mode, horizon_weeks: 4, scenario_summary: input.scenarioSummary }) });
+    const [row] = await this.request<PredictionRunRow[]>("analytics_prediction_runs", { method: "POST", body: JSON.stringify({ id: input.runId, project_id: input.projectId, scenario_id: input.scenarioId, model_version_id: input.modelVersionId, history_dataset_version_id: input.historyDatasetVersionId, job_id: input.jobId, prediction_artifact: input.predictionArtifact, status: "running" }) });
+    if (!row) throw new InternalServerErrorException("Analytics prediction run was not created.");
+    return this.toPredictionRun(row);
+  }
+
+  async markPredictionSucceeded(input: { projectId: string; runId: string; scenarioId: string; jobId: string; historyDatasetVersionId: string; artifact: StorageObjectRef; summary: PredictionOutputSummary }): Promise<void> {
+    const now = new Date().toISOString();
+    await this.request(`analytics_prediction_runs?id=eq.${input.runId}`, { method: "PATCH", body: JSON.stringify({ status: "succeeded", prediction_artifact: input.artifact, output_summary: input.summary, completed_at: now }) });
+    await this.request(`analytics_jobs?id=eq.${input.jobId}`, { method: "PATCH", body: JSON.stringify({ status: "succeeded", output_artifacts: [input.artifact], completed_at: now }) });
+    await this.request("analytics_lineage", { method: "POST", body: JSON.stringify({ id: randomUUID(), project_id: input.projectId, relationship: "predicted_from", input_dataset_version_id: input.historyDatasetVersionId, job_id: input.jobId, metadata: { scenarioId: input.scenarioId } }) });
+  }
+
+  async markPredictionFailed(runId: string, jobId: string, error: string): Promise<void> {
+    const now = new Date().toISOString();
+    await Promise.all([
+      this.request(`analytics_prediction_runs?id=eq.${runId}`, { method: "PATCH", body: JSON.stringify({ status: "failed", error_summary: error.slice(0, 1000), completed_at: now }) }),
+      this.request(`analytics_jobs?id=eq.${jobId}`, { method: "PATCH", body: JSON.stringify({ status: "failed", error_summary: error.slice(0, 1000), completed_at: now }) }),
+    ]);
+  }
+
+  async listPredictionRuns(projectId: string): Promise<PredictionContract[]> {
+    const query = new URLSearchParams({ select: "id,project_id,scenario_id,model_version_id,prediction_artifact,status,output_summary,created_at", project_id: `eq.${projectId}`, order: "created_at.desc" });
+    const rows = await this.request<PredictionRunRow[]>(`analytics_prediction_runs?${query}`);
+    return rows.map((row) => this.toPredictionRun(row));
   }
 
   async listPipelineRuns(projectId: string): Promise<AnalyticsPipelineRun[]> {
