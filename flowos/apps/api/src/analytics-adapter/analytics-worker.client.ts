@@ -52,17 +52,21 @@ export type PredictionWorkerResult = {
 @Injectable()
 export class AnalyticsWorkerClient {
   private readonly baseUrl = process.env.ANALYTICS_WORKER_URL;
+  private readonly sharedSecret = process.env.ANALYTICS_WORKER_SHARED_SECRET;
+  private readonly timeoutMs = Number(process.env.ANALYTICS_WORKER_TIMEOUT_MS ?? "60000");
 
   async profileCsv(csv: Buffer): Promise<CsvProfile> {
     if (!this.baseUrl) {
       throw new ServiceUnavailableException("Analytics profiling is unavailable: configure ANALYTICS_WORKER_URL.");
     }
+    const headers = this.headers("text/csv");
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl.replace(/\/$/, "")}/v1/profile`, {
         method: "POST",
-        headers: { "Content-Type": "text/csv" },
+        headers,
         body: csv as unknown as BodyInit,
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch {
       throw new ServiceUnavailableException("Analytics profiling worker is unavailable.");
@@ -88,12 +92,14 @@ export class AnalyticsWorkerClient {
 
   private async submitJob<T>(job: AnalyticsJob, fallback: string): Promise<T> {
     if (!this.baseUrl) throw new ServiceUnavailableException("Analytics processing is unavailable: configure ANALYTICS_WORKER_URL.");
+    const headers = this.headers("application/json");
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl.replace(/\/$/, "")}/v1/jobs`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(job),
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch {
       throw new ServiceUnavailableException("Analytics processing worker is unavailable.");
@@ -101,5 +107,15 @@ export class AnalyticsWorkerClient {
     const payload = await response.json().catch(() => ({})) as T & { error?: string };
     if (!response.ok) throw new UnprocessableEntityException(payload.error ?? fallback);
     return payload;
+  }
+
+  private headers(contentType: string): Record<string, string> {
+    if (!this.sharedSecret) {
+      throw new ServiceUnavailableException("Analytics worker security is unavailable: configure ANALYTICS_WORKER_SHARED_SECRET.");
+    }
+    return {
+      "Content-Type": contentType,
+      "x-analytics-worker-secret": this.sharedSecret,
+    };
   }
 }

@@ -28,8 +28,10 @@ missing tactic is not treated as an observed zero.
 
 Environment variables:
 
-- `ANALYTICS_WORKER_HOST` (default `127.0.0.1`)
+- `ANALYTICS_WORKER_HOST` (default `0.0.0.0`)
 - `ANALYTICS_WORKER_PORT` (default `8001`)
+- `PORT` (Railway-provided port; takes precedence over `ANALYTICS_WORKER_PORT`)
+- `ANALYTICS_WORKER_SHARED_SECRET` (required when called by the API in deployment)
 - `ANALYTICS_WORKER_CPU_SECONDS` (default `60`)
 - `ANALYTICS_WORKER_MEMORY_MB` (default `512`)
 - `ANALYTICS_WORKER_MAX_CONCURRENT_JOBS` (default `1`)
@@ -38,6 +40,8 @@ Environment variables:
 Container orchestration must enforce the same CPU/memory limits. Python applies
 process limits where the host supports `resource`; Windows reports configuration only.
 
-The service-role key must be configured only in the worker environment. In deployment,
-`ANALYTICS_WORKER_URL` from the API must be a reachable HTTPS worker address; Vercel
-cannot call a worker at `127.0.0.1`.
+The service-role key must be configured only in backend environments. In Railway,
+configure the worker without a public domain and call it from the API over Railway
+private networking. Set the same `ANALYTICS_WORKER_SHARED_SECRET` on both the API
+service and the worker service. Set `ANALYTICS_WORKER_URL` only on the API service;
+it must point to the worker's private Railway address, not `127.0.0.1`.
