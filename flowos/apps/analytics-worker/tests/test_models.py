@@ -37,6 +37,8 @@ class ModelTests(unittest.TestCase):
         )
         self.assertEqual(summary["rowCount"], 4)
         self.assertGreater(summary["totalPromotedUnits"], summary["totalBaselineUnits"])
+        self.assertEqual(summary["displayRows"][0]["productId"], "P1")
+        self.assertNotIn("salesUnits", summary["displayRows"][0])
         self.assertIn(b"incremental_units", output)
         self.assertNotIn(b"sales_units", output)
 

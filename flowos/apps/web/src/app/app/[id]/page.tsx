@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { DisplayBundle } from "@/components/DisplayBundle";
 import type { Flow } from "@flowos/types";
+import type { AnalyticsPredictionSummaryView, AnalyticsResultReference } from "@flowos/analytics-contracts";
 
 const EMBEDDED_FLOW_WAIT_TIMEOUT_MS = 30_000;
 const EMBEDDED_FLOW_POLL_INTERVAL_MS = 250;
@@ -16,14 +17,16 @@ export default function AppLaunchPage() {
   if (unavailable) return <main className="p-8 text-slate-500">This application is not available.</main>;
   if (!flow) return <main className="p-8 text-slate-400">Opening app…</main>;
   const components = flow.nodes.filter((node) => node.type === "COMPONENT");
-  if (components.length) return <main className="min-h-full bg-white text-slate-950"><div className="relative mx-auto min-h-screen max-w-7xl">{components.map((node) => { const position = (node.config as { position: { x: number; y: number; width: number; height: number } }).position; const embeddedFlowId = (node.config as { embeddedFlowId: string }).embeddedFlowId; return <Embedded key={node.id} flowId={embeddedFlowId} style={{ left: position.x, top: position.y, width: position.width, height: position.height }} />; })}</div></main>;
+  if (components.length) return <main className="min-h-full bg-white text-slate-950"><div className="relative mx-auto min-h-screen max-w-7xl">{components.map((node) => { const config = node.config as { position: { x: number; y: number; width: number; height: number }; embeddedFlowId: string; analyticsResultRef?: AnalyticsResultReference }; return <Embedded key={node.id} flowId={config.embeddedFlowId} analyticsResultRef={config.analyticsResultRef} style={{ left: config.position.x, top: config.position.y, width: config.position.width, height: config.position.height }} />; })}</div></main>;
   return <main className="p-8 text-slate-400">Opening guided app…</main>;
 }
 
-function Embedded({ flowId, style }: { flowId: string; style: React.CSSProperties }) {
-  const [flow, setFlow] = useState<Flow>(); const [runId, setRunId] = useState<string>(); const [message, setMessage] = useState<string>();
+function Embedded({ flowId, style, analyticsResultRef }: { flowId: string; style: React.CSSProperties; analyticsResultRef?: AnalyticsResultReference }) {
+  const [flow, setFlow] = useState<Flow>(); const [runId, setRunId] = useState<string>(); const [message, setMessage] = useState<string>(); const [analyticsResult, setAnalyticsResult] = useState<AnalyticsPredictionSummaryView>();
   useEffect(() => { api.getFlow(flowId).then((record) => setFlow(record.flowJson)); }, [flowId]);
   const display = flow?.nodes.find((node) => node.type === "DISPLAY");
+  const displayReference = display?.config.analyticsResultRef as AnalyticsResultReference | undefined;
+  useEffect(() => { const reference = analyticsResultRef ?? displayReference; if (!reference) { setAnalyticsResult(undefined); return; } api.resolveAnalyticsResultReference(reference).then(setAnalyticsResult).catch((error: unknown) => setMessage(error instanceof Error ? error.message : "Analytics result is unavailable.")); }, [analyticsResultRef, displayReference]);
   const submit = async (values: Record<string, unknown>) => {
     setMessage(undefined);
     try {
@@ -52,5 +55,5 @@ function Embedded({ flowId, style }: { flowId: string; style: React.CSSPropertie
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not submit this form."); }
   };
   if (!display) return null;
-  return <div className="absolute overflow-hidden" style={style}><DisplayBundle flowId={flowId} nodeId={display.id} onSubmit={submit} />{message && <div className="absolute bottom-0 left-0 right-0 bg-white/95 p-1 text-center text-xs text-slate-600">{message}</div>}</div>;
+  return <div className="absolute overflow-hidden" style={style}><DisplayBundle flowId={flowId} nodeId={display.id} onSubmit={submit} analyticsResult={analyticsResult} />{message && <div className="absolute bottom-0 left-0 right-0 bg-white/95 p-1 text-center text-xs text-slate-600">{message}</div>}</div>;
 }

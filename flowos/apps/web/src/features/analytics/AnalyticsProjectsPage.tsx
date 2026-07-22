@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
+import { runSyntheticShopDemo } from "./syntheticShopDemo";
 
 type Project = Awaited<ReturnType<typeof api.listAnalyticsProjects>>[number];
 type UploadedVersion = Awaited<ReturnType<typeof api.uploadAnalyticsDataset>>;
@@ -20,6 +21,7 @@ export function AnalyticsProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [demoMessage, setDemoMessage] = useState<string | null>(null);
 
   const selectedProject = useMemo(() => projects.find((project) => project.id === selectedProjectId) ?? null, [projects, selectedProjectId]);
 
@@ -57,6 +59,19 @@ export function AnalyticsProjectsPage() {
     } finally { setSubmitting(false); }
   }
 
+  async function runDemo() {
+    setSubmitting(true); setError(null); setDemoMessage(null);
+    try {
+      const demo = await runSyntheticShopDemo();
+      const project = await api.listAnalyticsProjects().then((items) => items.find((item) => item.id === demo.projectId));
+      if (project) setProjects((current) => [project, ...current.filter((item) => item.id !== project.id)]);
+      setSelectedProjectId(demo.projectId);
+      setDemoMessage(`Synthetic shop demo complete: ${demo.summary?.rowCount ?? 0} customer/product rows, ${demo.summary?.weightedPercentIncrement.toFixed(2) ?? "0.00"}% weighted modelled increment.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The synthetic shop demo could not run.");
+    } finally { setSubmitting(false); }
+  }
+
   return <main className="min-h-full flex-1 bg-white px-5 py-8 text-slate-900 sm:px-8">
     <div className="mx-auto max-w-6xl">
       <div className="border-b border-slate-200 pb-6">
@@ -66,6 +81,7 @@ export function AnalyticsProjectsPage() {
       </div>
 
       {error && <div role="alert" className="mt-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>}
+      {demoMessage && <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{demoMessage} {selectedProjectId && <a className="ml-1 font-semibold underline" href={`/analytics/projects/${selectedProjectId}/predictions`}>Inspect uplift</a>}</div>}
 
       <div className="mt-7 grid gap-7 lg:grid-cols-[1fr_1.25fr]">
         <section className="rounded-xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
@@ -75,6 +91,7 @@ export function AnalyticsProjectsPage() {
             <label className="block text-sm font-medium">Description <span className="font-normal text-slate-500">(optional)</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} className="mt-1.5 min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500" placeholder="Weekly sales and promotion data" /></label>
             <button disabled={submitting} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60">Create project</button>
           </form>
+          <div className="mt-5 rounded-lg border border-indigo-100 bg-indigo-50 p-4"><h3 className="text-sm font-semibold text-indigo-950">Synthetic shop demo</h3><p className="mt-1 text-sm leading-5 text-indigo-900">Creates 100 products, two customers, calendar and promotion/tactic signals, then runs the reviewed CSV → pipeline → model → uplift path. The fixture’s known promotion signal is 9 units.</p><button type="button" disabled={submitting} onClick={runDemo} className="mt-3 rounded-md bg-indigo-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{submitting ? "Running Storage-backed demo..." : "Run synthetic shop demo"}</button><p className="mt-2 text-xs text-indigo-800">Requires a locally reachable Analytics worker and the manually applied Analytics migrations; no Vercel worker setup is assumed.</p></div>
 
           <h2 className="mt-8 text-base font-semibold">Your projects</h2>
           {loading && <p className="mt-3 text-sm text-slate-500">Loading projects…</p>}

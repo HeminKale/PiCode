@@ -32,3 +32,8 @@ The project owner reports that `001`, `003`, `004`, and `005` have already been
 manually applied. Do not edit or rerun them. The four private Storage buckets
 (`analytics-raw`, `analytics-processed`, `analytics-model`, and
 `analytics-prediction`) already exist.
+
+Sprint A4 adds `006_analytics_audit_and_retention.sql`. It is awaiting the project
+owner's manual review/application. It adds project-scoped audit events, retention
+metadata, and cleanup schedule metadata only; it does not delete objects, create a
+worker schedule, change Storage policies, or alter the Prisma workaround.

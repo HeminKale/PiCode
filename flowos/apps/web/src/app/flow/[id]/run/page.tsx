@@ -9,6 +9,7 @@ import { useFlowStore } from "@/store/flowStore";
 import { Canvas } from "@/components/Canvas";
 import { DisplayBundle } from "@/components/DisplayBundle";
 import type { NodeStatus } from "@flowos/types";
+import type { AnalyticsPredictionSummaryView, AnalyticsResultReference } from "@flowos/analytics-contracts";
 
 interface LogEntry {
   nodeId: string;
@@ -29,6 +30,7 @@ export default function RunPage() {
   const [runId, setRunId] = useState<string>();
   const [displayNodeId, setDisplayNodeId] = useState<string>();
   const [log, setLog] = useState<LogEntry[]>([]);
+  const [analyticsResult, setAnalyticsResult] = useState<AnalyticsPredictionSummaryView>();
   const started = useRef(false);
 
   useEffect(() => {
@@ -77,6 +79,13 @@ export default function RunPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, flow]);
 
+  useEffect(() => {
+    const display = flow?.nodes.find((node) => node.type === "DISPLAY");
+    const reference = display?.config.analyticsResultRef as AnalyticsResultReference | undefined;
+    if (!reference) { setAnalyticsResult(undefined); return; }
+    api.resolveAnalyticsResultReference(reference).then(setAnalyticsResult).catch(() => setAnalyticsResult(undefined));
+  }, [flow]);
+
   if (loading) {
     return <div className="flex-1 flex items-center justify-center text-slate-500">Loading flow…</div>;
   }
@@ -117,7 +126,7 @@ export default function RunPage() {
 
       {runStatus === "awaiting_input" && runId && displayNodeId && (
         <div className="h-80 border-t border-slate-800 bg-white">
-          <DisplayBundle flowId={flow.id} nodeId={displayNodeId} onSubmit={async (values) => { await api.resumeRun(runId, values); setRunStatus("running"); setDisplayNodeId(undefined); }} />
+          <DisplayBundle flowId={flow.id} nodeId={displayNodeId} analyticsResult={analyticsResult} onSubmit={async (values) => { await api.resumeRun(runId, values); setRunStatus("running"); setDisplayNodeId(undefined); }} />
         </div>
       )}
 

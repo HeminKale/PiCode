@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import type { Flow } from "@flowos/types";
+import { validateAnalyticsDisplayReferences } from "@flowos/analytics-contracts";
 import { PrismaService } from "../prisma/prisma.service";
 import { LLMService } from "../llm/llm.service";
 import { GenerateFlowDto } from "./dto/generate-flow.dto";
@@ -20,6 +21,10 @@ export class FlowsService {
   }
 
   async createFlow(dto: CreateFlowDto) {
+    const analyticsReferenceIssues = validateAnalyticsDisplayReferences(dto.nodes as Array<{ type?: unknown; config?: unknown }>);
+    if (analyticsReferenceIssues.length) {
+      throw new BadRequestException({ message: "Analytics display reference validation failed.", issues: analyticsReferenceIssues });
+    }
     const now = new Date().toISOString();
     const id = dto.id ?? randomUUID();
 

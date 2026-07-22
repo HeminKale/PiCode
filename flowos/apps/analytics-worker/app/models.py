@@ -303,5 +303,11 @@ def predict_scenario(model_payload: bytes, history_payload: bytes, scenario: dic
         })
     total_baseline = sum(float(row["baseline_units"]) for row in output_rows)
     total_promoted = sum(float(row["promoted_units"]) for row in output_rows)
-    summary = {"rowCount": len(output_rows), "totalBaselineUnits": total_baseline, "totalPromotedUnits": total_promoted, "totalIncrementalUnits": total_promoted - total_baseline, "weightedPercentIncrement": 100 * (total_promoted - total_baseline) / max(total_baseline, 1e-6), "qualityFlags": flags}
+    # The complete immutable output remains in analytics-prediction Storage. This
+    # small, rounded projection is intentionally limited for a business display.
+    display_rows = [{
+        "productId": str(row["product_id"]), "customerId": str(row["customer_id"]), "weekNum": str(row["week_num"]),
+        "baselineUnits": row["baseline_units"], "promotedUnits": row["promoted_units"], "incrementalUnits": row["incremental_units"], "percentIncrement": row["percent_increment"],
+    } for row in output_rows[:100]]
+    summary = {"rowCount": len(output_rows), "totalBaselineUnits": total_baseline, "totalPromotedUnits": total_promoted, "totalIncrementalUnits": total_promoted - total_baseline, "weightedPercentIncrement": 100 * (total_promoted - total_baseline) / max(total_baseline, 1e-6), "qualityFlags": flags, "displayRows": display_rows}
     return write_csv(output_rows), summary

@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Get, Headers, Param, Post, UploadedFile, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
-import { MAX_CSV_BYTES, type AnalyticsPipelineDefinition, type ModelTrainingRequest } from "@flowos/analytics-contracts";
+import { MAX_CSV_BYTES, type AnalyticsPipelineDefinition, type AnalyticsResultReference, type ModelTrainingRequest } from "@flowos/analytics-contracts";
 import { AnalyticsService, type PipelineSourceBinding, type PredictionInput, type UploadedCsv } from "./analytics.service";
 
 type CreateProjectBody = { name?: string; description?: string };
@@ -79,6 +79,16 @@ export class AnalyticsController {
   @Get("projects/:projectId/predictions")
   listPredictions(@Headers("x-workspace-id") workspaceId: string | undefined, @Param("projectId") projectId: string) {
     return this.analytics.listPredictionRuns(this.workspaceId(workspaceId), projectId);
+  }
+
+  @Get("projects/:projectId/audit-events")
+  listAuditEvents(@Headers("x-workspace-id") workspaceId: string | undefined, @Param("projectId") projectId: string) {
+    return this.analytics.listAuditEvents(this.workspaceId(workspaceId), projectId);
+  }
+
+  @Post("result-references/resolve")
+  resolveResultReference(@Headers("x-workspace-id") workspaceId: string | undefined, @Body() reference: AnalyticsResultReference) {
+    return this.analytics.resolvePredictionSummaryReference(this.workspaceId(workspaceId), reference);
   }
 
   @Post("projects/:projectId/models/:modelVersionId/predictions")

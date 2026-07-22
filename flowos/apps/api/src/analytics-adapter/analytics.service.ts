@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
-import { ANALYTICS_CONTRACT_VERSION, buildAnalyticsObjectPath, validateCsvUploadMetadata, validateModelTrainingRequest, validatePipelineDefinition, validatePredictionRequest, type AnalyticsModelFamily, type AnalyticsPipelineDefinition, type AnalyticsPipelineRun, type AnalyticsPipelineVersion, type AnalyticsProject, type DatasetVersion, type ModelTrainingRequest, type PredictionContract, type PredictionRequest } from "@flowos/analytics-contracts";
+import { ANALYTICS_CONTRACT_VERSION, buildAnalyticsObjectPath, validateAnalyticsResultReference, validateCsvUploadMetadata, validateModelTrainingRequest, validatePipelineDefinition, validatePredictionRequest, type AnalyticsModelFamily, type AnalyticsPipelineDefinition, type AnalyticsPipelineRun, type AnalyticsPipelineVersion, type AnalyticsPredictionSummaryView, type AnalyticsProject, type AnalyticsResultReference, type DatasetVersion, type ModelTrainingRequest, type PredictionContract, type PredictionRequest } from "@flowos/analytics-contracts";
 import { AnalyticsMetadataService } from "./analytics-metadata.service";
 import { AnalyticsStorageService } from "./analytics-storage.service";
 import { AnalyticsWorkerClient } from "./analytics-worker.client";
@@ -21,10 +21,13 @@ export class AnalyticsService {
     return this.metadata.listProjects(workspaceId);
   }
 
-  createProject(workspaceId: string, name: string, description?: string): Promise<AnalyticsProject> {
+  async createProject(workspaceId: string, name: string, description?: string): Promise<AnalyticsProject> {
     const trimmedName = name.trim();
     if (!trimmedName || trimmedName.length > 120) throw new BadRequestException("Project name must be between 1 and 120 characters.");
-    return this.metadata.createProject(workspaceId, trimmedName, description?.trim());
+    const project = await this.metadata.createProject(workspaceId, trimmedName, description?.trim());
+    await this.metadata.ensureRetentionDefaults(project.id);
+    await this.audit(workspaceId, project.id, "project.created", "project", project.id, { name: project.name });
+    return project;
   }
 
   async uploadCsv(workspaceId: string, projectId: string, datasetName: string, file: UploadedCsv | undefined): Promise<DatasetVersion> {
@@ -44,7 +47,9 @@ export class AnalyticsService {
     const metadataVersionId = await this.metadata.createUploadingVersion({ id: versionId, projectId, datasetId: dataset.id, fileName: file.originalname, byteSize: file.size, storage: storageRef });
     try {
       await this.storage.uploadImmutable("raw", path, file.buffer, "text/csv", sha256);
-      return await this.metadata.markVersionProfiled(metadataVersionId, profile);
+      const version = await this.metadata.markVersionProfiled(metadataVersionId, profile);
+      await this.audit(workspaceId, projectId, "dataset.uploaded", "dataset_version", version.id, { datasetId: version.datasetId, byteSize: version.byteSize, rowCount: profile.dataRowCount });
+      return version;
     } catch (error) {
       await this.metadata.markVersionFailed(metadataVersionId, error instanceof Error ? error.message : "Storage upload failed.");
       throw error;
@@ -64,7 +69,9 @@ export class AnalyticsService {
     const issues = validatePipelineDefinition(reviewedDefinition);
     if (issues.length) throw new BadRequestException({ message: "Pipeline validation failed.", issues });
     const template = await this.metadata.findOrCreatePipelineTemplate(projectId, trimmedName, description?.trim());
-    return this.metadata.createPipelineVersion(template, reviewedDefinition, isApproved);
+    const version = await this.metadata.createPipelineVersion(template, reviewedDefinition, isApproved);
+    await this.audit(workspaceId, projectId, "pipeline.version_created", "pipeline_version", version.id, { isApproved: version.isApproved, nodeCount: version.definition.nodes.length });
+    return version;
   }
 
   async listPipelineVersions(workspaceId: string, projectId: string): Promise<AnalyticsPipelineVersion[]> {
@@ -114,7 +121,9 @@ export class AnalyticsService {
         trainingArtifact: trainingVersion.storage, modelArtifact: { ...artifact, contentType: "application/json" }, trainingRequest: reviewedRequest as unknown as Record<string, unknown>,
       });
       await this.metadata.markModelTrainingSucceeded({ projectId, modelId, jobId, trainingDatasetVersionId: trainingVersion.id, artifact: result.modelArtifact, modelFamily: result.modelFamily, featureSet: result.featureSet, metrics: result.metrics, dataFingerprint: result.dataFingerprint, isApproved: result.isApproved, evaluations: result.evaluations });
-      return { ...pending, artifact: result.modelArtifact, modelFamily: result.modelFamily, metrics: result.metrics, dataFingerprint: result.dataFingerprint, isApproved: result.isApproved, status: "succeeded" as const };
+      const model = { ...pending, artifact: result.modelArtifact, modelFamily: result.modelFamily, metrics: result.metrics, dataFingerprint: result.dataFingerprint, isApproved: result.isApproved, status: "succeeded" as const };
+      await this.audit(workspaceId, projectId, "model.training_completed", "model_version", model.id, { modelFamily: result.modelFamily, isApproved: result.isApproved, wape: result.metrics.wape });
+      return model;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Model training worker failed.";
       await this.metadata.markModelTrainingFailed(modelId, jobId, message);
@@ -125,6 +134,23 @@ export class AnalyticsService {
   async listPredictionRuns(workspaceId: string, projectId: string): Promise<PredictionContract[]> {
     await this.metadata.assertProjectInWorkspace(projectId, workspaceId);
     return this.metadata.listPredictionRuns(projectId);
+  }
+
+  async listAuditEvents(workspaceId: string, projectId: string) {
+    await this.metadata.assertProjectInWorkspace(projectId, workspaceId);
+    return this.metadata.listAuditEvents(projectId);
+  }
+
+  async resolvePredictionSummaryReference(workspaceId: string, reference: AnalyticsResultReference): Promise<AnalyticsPredictionSummaryView> {
+    const issues = validateAnalyticsResultReference(reference);
+    if (issues.length) throw new BadRequestException({ message: "Analytics result reference validation failed.", issues });
+    await this.metadata.assertProjectInWorkspace(reference.projectId, workspaceId);
+    const prediction = await this.metadata.getPredictionRun(reference.projectId, reference.predictionRunId);
+    if (!prediction.summary) throw new BadRequestException("The approved prediction has no safe summary projection.");
+    const model = await this.metadata.getModelVersion(reference.projectId, prediction.modelVersionId);
+    if (!model.isApproved) throw new BadRequestException("Only predictions from approved models can feed a display.");
+    await this.audit(workspaceId, reference.projectId, "prediction.summary_viewed", "prediction_run", prediction.id, { modelVersionId: prediction.modelVersionId, rowCount: prediction.summary.rowCount });
+    return { kind: "analytics_prediction_summary", projectId: prediction.projectId, predictionRunId: prediction.id, modelVersionId: prediction.modelVersionId, createdAt: prediction.createdAt, summary: prediction.summary };
   }
 
   async predict(workspaceId: string, projectId: string, modelVersionId: string, input: PredictionInput): Promise<PredictionContract> {
@@ -146,7 +172,9 @@ export class AnalyticsService {
         modelArtifact: model.artifact, historyArtifact: history.storage, predictionArtifact: { ...artifact, contentType: "text/csv" }, scenario: input as unknown as Record<string, unknown>,
       });
       await this.metadata.markPredictionSucceeded({ projectId, runId, scenarioId, jobId, historyDatasetVersionId: history.id, artifact: result.predictionArtifact, summary: result.summary });
-      return { ...pending, artifact: result.predictionArtifact, status: "succeeded", summary: result.summary };
+      const prediction = { ...pending, artifact: result.predictionArtifact, status: "succeeded" as const, summary: result.summary };
+      await this.audit(workspaceId, projectId, "prediction.completed", "prediction_run", prediction.id, { modelVersionId, mode: input.mode, rowCount: result.summary.rowCount });
+      return prediction;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Prediction worker failed.";
       await this.metadata.markPredictionFailed(runId, jobId, message);
@@ -180,11 +208,17 @@ export class AnalyticsService {
         sources: sources.map((source) => ({ sourceId: source.sourceId, artifact: inputVersions.find((version) => version.id === source.datasetVersionId)!.storage })), outputArtifact: output,
       });
       await this.metadata.markPipelineRunSucceeded({ projectId, runId: run.id, workerJobId, outputVersionId: outputVersion.id, output: result.outputArtifact, outputByteSize: result.outputByteSize, profile: result.outputProfile, report: result.qualityReport, pipelineNodeIds: pipelineVersion.definition.nodes.map((node) => node.id) });
-      return { ...run, status: "succeeded" };
+      const completed = { ...run, status: "succeeded" as const };
+      await this.audit(workspaceId, projectId, "pipeline.completed", "pipeline_run", completed.id, { pipelineVersionId, outputDatasetVersionId: outputVersion.id, outputRows: result.qualityReport.outputRowCount });
+      return completed;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Pipeline worker failed.";
       await this.metadata.markPipelineRunFailed(run.id, workerJobId, outputVersion.id, message);
       throw error;
     }
+  }
+
+  private audit(workspaceId: string, projectId: string, action: string, resourceType: string, resourceId: string, details: Record<string, unknown>): Promise<void> {
+    return this.metadata.recordAuditEvent({ workspaceId, projectId, action, resourceType, resourceId, details });
   }
 }

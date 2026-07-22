@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MAX_CSV_BYTES, buildAnalyticsObjectPath, defaultFeatureSet, validateColumnMappings, validateCsvUploadMetadata, validateModelTrainingRequest, validatePipelineDefinition, validatePredictionRequest } from "../src/index.js";
+import { ANALYTICS_RESULT_REFERENCE_VERSION, MAX_CSV_BYTES, buildAnalyticsObjectPath, defaultFeatureSet, validateAnalyticsDisplayReferences, validateAnalyticsResultReference, validateColumnMappings, validateCsvUploadMetadata, validateModelTrainingRequest, validatePipelineDefinition, validatePredictionRequest } from "../src/index.js";
 
 test("CSV upload validation enforces file type and size", () => {
   assert.deepEqual(validateCsvUploadMetadata({ fileName: "sales.csv", byteSize: MAX_CSV_BYTES, contentType: "text/csv" }), []);
@@ -53,4 +53,11 @@ test("future forecasts require a fixed four-week, complete in-app horizon", () =
   assert.deepEqual(validatePredictionRequest({ mode: "future_forecast", rows: [row, { ...row, weekNum: "2026-31" }, { ...row, weekNum: "2026-32" }, { ...row, weekNum: "2026-33" }] }), []);
   assert.equal(validatePredictionRequest({ mode: "future_forecast", rows: [row] }).at(0)?.code, "invalid_prediction");
   assert.equal(validatePredictionRequest({ mode: "historical_what_if", customerId: "C1", promotionIntensity: 2 }).at(0)?.code, "invalid_prediction");
+});
+
+test("display integration accepts only typed prediction-summary references", () => {
+  const reference = { contractVersion: ANALYTICS_RESULT_REFERENCE_VERSION, kind: "analytics_prediction_summary" as const, projectId: "project_1", predictionRunId: "prediction_1" };
+  assert.deepEqual(validateAnalyticsResultReference(reference), []);
+  assert.deepEqual(validateAnalyticsDisplayReferences([{ type: "DISPLAY", config: { analyticsResultRef: reference } }]), []);
+  assert.equal(validateAnalyticsDisplayReferences([{ type: "COMPONENT", config: { predictionArtifact: { bucket: "analytics-prediction" } } }]).at(0)?.code, "invalid_result_reference");
 });
