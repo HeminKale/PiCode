@@ -1,5 +1,6 @@
+import { AnalyticsWorkspaceGate } from "@/components/AnalyticsWorkspaceGate";
 import { AnalyticsProjectsPage } from "@/features/analytics/AnalyticsProjectsPage";
 
 export default function AnalyticsPage() {
-  return <AnalyticsProjectsPage />;
+  return <AnalyticsWorkspaceGate><AnalyticsProjectsPage /></AnalyticsWorkspaceGate>;
 }

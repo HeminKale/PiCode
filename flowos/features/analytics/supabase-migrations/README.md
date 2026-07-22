@@ -106,14 +106,65 @@ where not exists (
 );
 ```
 
-## Planned FlowOS provider
+## FlowOS browser authentication and workspace selection
 
-The current web app has no Supabase client, sign-in UI, workspace selector, or user
-provisioning flow. When added, its top-level client-side provider must call
+Sprint A5.5 adds a browser-safe Supabase client, sign-in UI, session refresh/sign-out,
+and workspace selector. Its top-level client-side provider calls
 `setAnalyticsAuthContext({ workspaceId, accessToken })` whenever the selected workspace
-or Supabase access token changes, and call `setAnalyticsAuthContext(undefined)` on
+or Supabase access token changes, and calls `setAnalyticsAuthContext(undefined)` on
 sign-out, session expiry, or workspace deselection. The API independently verifies the
 bearer token and active membership; the workspace ID is only a selector.
+
+Configure the web app with `NEXT_PUBLIC_SUPABASE_URL` and
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (the older `NEXT_PUBLIC_SUPABASE_ANON_KEY` is
+also accepted). `apps/web/.env.example` contains the safe local-development shape.
+These are public browser credentials; never set `SUPABASE_SERVICE_ROLE_KEY` or any
+server credential in a `NEXT_PUBLIC_*` variable.
+
+### Existing-user membership bootstrap
+
+Creating a user in Supabase Auth does **not** make that user an Analytics manager or
+admin. The role belongs to an active workspace-membership record. First discover the
+actual workspace IDs and the user's existing memberships:
+
+```sql
+select distinct workspace_id
+from public.analytics_projects
+order by workspace_id;
+
+select workspace_id, role, status
+from public.analytics_workspace_members
+where actor_id = 'ee47c876-e4a3-4975-84a6-a3baf2e6de89'
+order by workspace_id;
+```
+
+After choosing the intended workspace, assign the least-privileged role required. Use
+`owner` or `admin` only for the person who administers Analytics access; use `manager`
+for a person who needs to manage pipelines and approve models but should not administer
+the workspace:
+
+```sql
+insert into public.analytics_workspace_members (
+  workspace_id,
+  actor_id,
+  role,
+  status
+)
+values (
+  'REPLACE-WITH-ACTUAL-WORKSPACE-ID',
+  'ee47c876-e4a3-4975-84a6-a3baf2e6de89',
+  'manager',
+  'active'
+)
+on conflict (workspace_id, actor_id) do update
+set role = excluded.role,
+    status = 'active',
+    updated_at = now();
+```
+
+Run this only after replacing the workspace ID and confirming the intended role. To
+make the user an administrator instead, replace `manager` with `admin` after verifying
+they should manage membership and retention policies.
 
 Deploy the Next.js app on Vercel with `NEXT_PUBLIC_API_URL`, the public Supabase URL,
 and the public Supabase publishable key. Deploy the Nest API and Analytics worker on
