@@ -24,6 +24,7 @@ type ModelVersionRow = { id: string; project_id: string; training_dataset_versio
 type ModelEvaluationRow = { id: string; model_version_id: string; algorithm: AnalyticsModelFamily; metrics: ModelMetrics; segment_errors: Record<string, ModelMetrics>; selected: boolean; created_at: string };
 type PredictionScenarioRow = { id: string; project_id: string; model_version_id: string; mode: AnalyticsPredictionMode; horizon_weeks: 4; created_at: string };
 type PredictionRunRow = { id: string; project_id: string; scenario_id: string; model_version_id: string; prediction_artifact: StorageObjectRef; status: PredictionContract["status"]; output_summary: PredictionOutputSummary | null; created_at: string };
+type AuditEventRow = { id: string; workspace_id: string; project_id: string; action: string; resource_type: string; resource_id: string | null; actor_type: "service" | "system" | "user"; details: Record<string, unknown>; created_at: string };
 
 @Injectable()
 export class AnalyticsMetadataService {
@@ -101,6 +102,33 @@ export class AnalyticsMetadataService {
     const query = new URLSearchParams({ select: "id,workspace_id,name,description,created_at,updated_at", workspace_id: `eq.${workspaceId}`, order: "updated_at.desc" });
     const rows = await this.request<ProjectRow[]>(`analytics_projects?${query}`);
     return rows.map((row) => this.toProject(row));
+  }
+
+  async recordAuditEvent(input: { workspaceId: string; projectId: string; action: string; resourceType: string; resourceId?: string; details?: Record<string, unknown> }): Promise<void> {
+    await this.request("analytics_audit_events", {
+      method: "POST",
+      body: JSON.stringify({ id: randomUUID(), workspace_id: input.workspaceId, project_id: input.projectId, action: input.action, resource_type: input.resourceType, resource_id: input.resourceId ?? null, actor_type: "service", details: input.details ?? {} }),
+    });
+  }
+
+  async ensureRetentionDefaults(projectId: string): Promise<void> {
+    const policies = [["raw", 365], ["processed", 365], ["model", 730], ["prediction", 365]];
+    await this.request("analytics_retention_policies", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify(policies.map(([artifactKind, retentionDays]) => ({ id: randomUUID(), project_id: projectId, artifact_kind: artifactKind, retention_days: retentionDays }))),
+    });
+    await this.request("analytics_cleanup_schedules", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify({ id: randomUUID(), project_id: projectId, schedule_cron: "0 3 * * *", is_enabled: true }),
+    });
+  }
+
+  async listAuditEvents(projectId: string): Promise<Array<{ id: string; action: string; resourceType: string; resourceId?: string; details: Record<string, unknown>; createdAt: string }>> {
+    const query = new URLSearchParams({ select: "id,workspace_id,project_id,action,resource_type,resource_id,actor_type,details,created_at", project_id: `eq.${projectId}`, order: "created_at.desc", limit: "50" });
+    const rows = await this.request<AuditEventRow[]>(`analytics_audit_events?${query}`);
+    return rows.map((row) => ({ id: row.id, action: row.action, resourceType: row.resource_type, resourceId: row.resource_id ?? undefined, details: row.details ?? {}, createdAt: row.created_at }));
   }
 
   async createProject(workspaceId: string, name: string, description?: string): Promise<AnalyticsProject> {
@@ -322,6 +350,13 @@ export class AnalyticsMetadataService {
     const query = new URLSearchParams({ select: "id,project_id,scenario_id,model_version_id,prediction_artifact,status,output_summary,created_at", project_id: `eq.${projectId}`, order: "created_at.desc" });
     const rows = await this.request<PredictionRunRow[]>(`analytics_prediction_runs?${query}`);
     return rows.map((row) => this.toPredictionRun(row));
+  }
+
+  async getPredictionRun(projectId: string, id: string): Promise<PredictionContract> {
+    const query = new URLSearchParams({ select: "id,project_id,scenario_id,model_version_id,prediction_artifact,status,output_summary,created_at", project_id: `eq.${projectId}`, id: `eq.${id}`, status: "eq.succeeded", limit: "1" });
+    const rows = await this.request<PredictionRunRow[]>(`analytics_prediction_runs?${query}`);
+    if (!rows[0]) throw new NotFoundException("A completed prediction result was not found in this project.");
+    return this.toPredictionRun(rows[0]);
   }
 
   async listPipelineRuns(projectId: string): Promise<AnalyticsPipelineRun[]> {

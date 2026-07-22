@@ -245,8 +245,15 @@ function DisplayForm({ config, patch }: { config: any; patch: Patch }) {
           )}
         />
       </Field>
+      <AnalyticsResultReferenceForm config={config} patch={patch} />
     </>
   );
+}
+
+function AnalyticsResultReferenceForm({ config, patch }: { config: any; patch: Patch }) {
+  const reference = config.analyticsResultRef ?? {};
+  const update = (partial: Record<string, string>) => patch({ analyticsResultRef: { contractVersion: "analytics.result-ref.v1", kind: "analytics_prediction_summary", ...reference, ...partial } });
+  return <div className="rounded border border-indigo-950 bg-indigo-950/30 p-2 text-xs text-slate-300"><div className="font-medium text-indigo-200">Analytics result reference (optional)</div><p className="mt-1 text-[11px] text-slate-400">Stores identifiers only. Raw rows, artifacts, models, and datasets cannot enter flow JSON.</p><div className="mt-2 grid gap-2"><TextInput value={reference.projectId ?? ""} onChange={(event) => update({ projectId: event.target.value })} placeholder="Analytics project ID" /><TextInput value={reference.predictionRunId ?? ""} onChange={(event) => update({ predictionRunId: event.target.value })} placeholder="Approved prediction run ID" /></div></div>;
 }
 
 function ComponentForm({ config, patch }: { config: any; patch: Patch }) {
@@ -273,6 +280,7 @@ function ComponentForm({ config, patch }: { config: any; patch: Patch }) {
           ))}
         </div>
       </Field>
+      <AnalyticsResultReferenceForm config={config} patch={patch} />
     </>
   );
 }

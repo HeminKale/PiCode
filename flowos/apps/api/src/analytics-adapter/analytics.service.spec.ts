@@ -32,6 +32,10 @@ describe("AnalyticsService upload validation", () => {
     markPredictionSucceeded: jest.fn(),
     markPredictionFailed: jest.fn(),
     listPredictionRuns: jest.fn(),
+    getPredictionRun: jest.fn(),
+    recordAuditEvent: jest.fn(),
+    ensureRetentionDefaults: jest.fn(),
+    listAuditEvents: jest.fn(),
   };
   const storage = { uploadImmutable: jest.fn() };
   const worker = { profileCsv: jest.fn(), processDataset: jest.fn(), trainModel: jest.fn(), predict: jest.fn() };
@@ -118,5 +122,17 @@ describe("AnalyticsService upload validation", () => {
     await expect(service.predict("workspace_1", "project_1", "model_1", { mode: "future_forecast", historyDatasetVersionId: "processed_1", rows: [] }))
       .rejects.toBeInstanceOf(BadRequestException);
     expect(metadata.createPredictionRun).not.toHaveBeenCalled();
+  });
+
+  it("resolves only an approved, project-scoped prediction summary without artifacts", async () => {
+    metadata.getPredictionRun.mockResolvedValue({ id: "prediction_1", projectId: "project_1", modelVersionId: "model_1", createdAt: "2026-07-22T00:00:00.000Z", summary: { rowCount: 2, totalBaselineUnits: 10, totalPromotedUnits: 19, totalIncrementalUnits: 9, weightedPercentIncrement: 90, qualityFlags: [], displayRows: [{ productId: "P1", customerId: "C1", weekNum: "2026-01", baselineUnits: 5, promotedUnits: 9.5, incrementalUnits: 4.5, percentIncrement: 90 }] }, artifact: { bucket: "analytics-prediction", path: "private.csv" } });
+    metadata.getModelVersion.mockResolvedValue({ isApproved: true });
+
+    const result = await service.resolvePredictionSummaryReference("workspace_1", { contractVersion: "analytics.result-ref.v1", kind: "analytics_prediction_summary", projectId: "project_1", predictionRunId: "prediction_1" });
+
+    expect(metadata.assertProjectInWorkspace).toHaveBeenCalledWith("project_1", "workspace_1");
+    expect(result).toEqual(expect.objectContaining({ kind: "analytics_prediction_summary", predictionRunId: "prediction_1" }));
+    expect(result).not.toHaveProperty("artifact");
+    expect(metadata.recordAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "prediction.summary_viewed" }));
   });
 });

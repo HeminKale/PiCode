@@ -1,4 +1,5 @@
 export const ANALYTICS_CONTRACT_VERSION = "analytics.v1" as const;
+export const ANALYTICS_RESULT_REFERENCE_VERSION = "analytics.result-ref.v1" as const;
 export const MAX_CSV_BYTES = 10 * 1024 * 1024;
 export const MAX_CSV_DATA_ROWS = 15_000;
 
@@ -243,6 +244,18 @@ export interface PredictionOutputSummary {
   totalIncrementalUnits: number;
   weightedPercentIncrement: number;
   qualityFlags: string[];
+  /** Bounded, rounded display projection; the complete prediction CSV remains private Storage. */
+  displayRows?: PredictionDisplayRow[];
+}
+
+export interface PredictionDisplayRow {
+  productId: string;
+  customerId: string;
+  weekNum: string;
+  baselineUnits: number;
+  promotedUnits: number;
+  incrementalUnits: number;
+  percentIncrement: number;
 }
 
 export interface PredictionContract {
@@ -254,6 +267,30 @@ export interface PredictionContract {
   status: AnalyticsJobStatus;
   summary?: PredictionOutputSummary;
   createdAt: string;
+}
+
+/**
+ * The only Analytics value that a FlowOS DISPLAY or COMPONENT may persist in
+ * flowJson. It deliberately identifies a reviewed result without embedding an
+ * artifact path, model, CSV, processed dataset, or prediction rows.
+ */
+export interface AnalyticsPredictionSummaryReference {
+  contractVersion: typeof ANALYTICS_RESULT_REFERENCE_VERSION;
+  kind: "analytics_prediction_summary";
+  projectId: string;
+  predictionRunId: string;
+}
+
+export type AnalyticsResultReference = AnalyticsPredictionSummaryReference;
+
+/** Safe projection resolved at render time after workspace/project checks. */
+export interface AnalyticsPredictionSummaryView {
+  kind: "analytics_prediction_summary";
+  projectId: string;
+  predictionRunId: string;
+  modelVersionId: string;
+  createdAt: string;
+  summary: PredictionOutputSummary;
 }
 
 export interface AnalyticsJob {
@@ -281,7 +318,7 @@ export interface CsvUploadMetadata {
 }
 
 export interface ValidationIssue {
-  code: "invalid_file_type" | "file_too_large" | "invalid_file_name" | "invalid_column_mapping" | "invalid_pipeline" | "invalid_model_training" | "invalid_prediction";
+  code: "invalid_file_type" | "file_too_large" | "invalid_file_name" | "invalid_column_mapping" | "invalid_pipeline" | "invalid_model_training" | "invalid_prediction" | "invalid_result_reference";
   message: string;
 }
 
@@ -415,4 +452,45 @@ export function validatePredictionRequest(request: PredictionRequest): Validatio
     }
   }
   return issues;
+}
+
+export function validateAnalyticsResultReference(value: unknown): ValidationIssue[] {
+  if (!value || typeof value !== "object") {
+    return [{ code: "invalid_result_reference", message: "Analytics results must use a typed result reference." }];
+  }
+  const reference = value as Partial<AnalyticsResultReference>;
+  if (
+    reference.contractVersion !== ANALYTICS_RESULT_REFERENCE_VERSION
+    || reference.kind !== "analytics_prediction_summary"
+    || !isSafeReferenceId(reference.projectId)
+    || !isSafeReferenceId(reference.predictionRunId)
+  ) {
+    return [{ code: "invalid_result_reference", message: "Analytics result references require a project-scoped approved prediction summary." }];
+  }
+  return [];
+}
+
+/**
+ * Validates the integration seam without making FlowOS execution understand
+ * Analytics. References are resolved by the Analytics API at render time.
+ */
+export function validateAnalyticsDisplayReferences(nodes: Array<{ type?: unknown; config?: unknown }>): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  for (const node of nodes) {
+    if (node.type !== "DISPLAY" && node.type !== "COMPONENT") continue;
+    const config = node.config;
+    if (!config || typeof config !== "object") continue;
+    const record = config as Record<string, unknown>;
+    if ("analyticsResultRef" in record) issues.push(...validateAnalyticsResultReference(record.analyticsResultRef));
+    for (const forbidden of ["analyticsPredictionRows", "predictionArtifact", "modelArtifact", "rawCsv", "processedDataset"]) {
+      if (forbidden in record) {
+        issues.push({ code: "invalid_result_reference", message: `${forbidden} cannot be stored in flowJson; use analyticsResultRef instead.` });
+      }
+    }
+  }
+  return issues;
+}
+
+function isSafeReferenceId(value: unknown): value is string {
+  return typeof value === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(value);
 }

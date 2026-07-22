@@ -1,4 +1,5 @@
 import type { Flow, GenerateFlowResponse, FlowRun } from "@flowos/types";
+import type { AnalyticsPredictionSummaryView, AnalyticsResultReference } from "@flowos/analytics-contracts";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -56,6 +57,10 @@ export const api = {
     request<Array<{ id: string; modelVersionId: string; scenarioId: string; status: string; summary?: PredictionSummary; createdAt: string }>>(`/analytics/projects/${projectId}/predictions`, { headers: analyticsHeaders() }),
   createAnalyticsPrediction: (projectId: string, modelVersionId: string, input: AnalyticsPredictionInput) =>
     request<{ id: string; status: string; summary?: PredictionSummary }>(`/analytics/projects/${projectId}/models/${modelVersionId}/predictions`, { method: "POST", headers: analyticsHeaders(), body: JSON.stringify(input) }),
+  listAnalyticsAuditEvents: (projectId: string) =>
+    request<Array<{ id: string; action: string; resourceType: string; resourceId?: string; details: Record<string, unknown>; createdAt: string }>>(`/analytics/projects/${projectId}/audit-events`, { headers: analyticsHeaders() }),
+  resolveAnalyticsResultReference: (reference: AnalyticsResultReference) =>
+    request<AnalyticsPredictionSummaryView>("/analytics/result-references/resolve", { method: "POST", headers: analyticsHeaders(), body: JSON.stringify(reference) }),
   generateFlow: (prompt: string, context?: string) =>
     request<GenerateFlowResponse>("/flows/generate", {
       method: "POST",
@@ -127,7 +132,7 @@ export type ForecastRowInput = { productId: string; customerId: string; weekNum:
 export type AnalyticsPredictionInput =
   | { mode: "historical_what_if"; historyDatasetVersionId: string; customerId: string; productIds?: string[]; weekNums?: string[]; promotionIntensity: number; tactics?: Record<string, number | null> }
   | { mode: "future_forecast"; historyDatasetVersionId: string; rows: ForecastRowInput[] };
-export type PredictionSummary = { rowCount: number; totalBaselineUnits: number; totalPromotedUnits: number; totalIncrementalUnits: number; weightedPercentIncrement: number; qualityFlags: string[] };
+export type PredictionSummary = { rowCount: number; totalBaselineUnits: number; totalPromotedUnits: number; totalIncrementalUnits: number; weightedPercentIncrement: number; qualityFlags: string[]; displayRows?: Array<{ productId: string; customerId: string; weekNum: string; baselineUnits: number; promotedUnits: number; incrementalUnits: number; percentIncrement: number }> };
 
 function analyticsHeaders(): HeadersInit {
   return { "x-workspace-id": process.env.NEXT_PUBLIC_ANALYTICS_WORKSPACE_ID ?? "default-workspace" };
