@@ -1,12 +1,13 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
-import { ANALYTICS_CONTRACT_VERSION, buildAnalyticsObjectPath, validateCsvUploadMetadata, validatePipelineDefinition, type AnalyticsPipelineDefinition, type AnalyticsPipelineRun, type AnalyticsPipelineVersion, type AnalyticsProject, type DatasetVersion } from "@flowos/analytics-contracts";
+import { ANALYTICS_CONTRACT_VERSION, buildAnalyticsObjectPath, validateCsvUploadMetadata, validateModelTrainingRequest, validatePipelineDefinition, validatePredictionRequest, type AnalyticsModelFamily, type AnalyticsPipelineDefinition, type AnalyticsPipelineRun, type AnalyticsPipelineVersion, type AnalyticsProject, type DatasetVersion, type ModelTrainingRequest, type PredictionContract, type PredictionRequest } from "@flowos/analytics-contracts";
 import { AnalyticsMetadataService } from "./analytics-metadata.service";
 import { AnalyticsStorageService } from "./analytics-storage.service";
 import { AnalyticsWorkerClient } from "./analytics-worker.client";
 
 export type UploadedCsv = { originalname: string; mimetype?: string; size: number; buffer: Buffer };
 export type PipelineSourceBinding = { sourceId: string; datasetVersionId: string };
+export type PredictionInput = PredictionRequest & { historyDatasetVersionId: string };
 
 @Injectable()
 export class AnalyticsService {
@@ -79,6 +80,78 @@ export class AnalyticsService {
   async listQualityReports(workspaceId: string, projectId: string) {
     await this.metadata.assertProjectInWorkspace(projectId, workspaceId);
     return this.metadata.listQualityReports(projectId);
+  }
+
+  async listModelVersions(workspaceId: string, projectId: string) {
+    await this.metadata.assertProjectInWorkspace(projectId, workspaceId);
+    return this.metadata.listModelVersions(projectId);
+  }
+
+  async listModelEvaluations(workspaceId: string, projectId: string) {
+    await this.metadata.assertProjectInWorkspace(projectId, workspaceId);
+    return this.metadata.listModelEvaluations(projectId);
+  }
+
+  async trainModel(workspaceId: string, projectId: string, request: ModelTrainingRequest) {
+    await this.metadata.assertProjectInWorkspace(projectId, workspaceId);
+    const reviewedRequest: ModelTrainingRequest = {
+      ...request,
+      contractVersion: ANALYTICS_CONTRACT_VERSION,
+      target: "sales_units",
+      candidateAlgorithms: request.candidateAlgorithms ?? ["ridge_linear", "poisson_glm", "histogram_gradient_boosting"],
+      thresholds: request.thresholds ?? { maxWape: 100 },
+    };
+    const issues = validateModelTrainingRequest(reviewedRequest);
+    if (issues.length) throw new BadRequestException({ message: "Model training validation failed.", issues });
+    const trainingVersion = await this.metadata.getProcessedDatasetVersion(projectId, reviewedRequest.trainingDatasetVersionId);
+    const modelId = randomUUID();
+    const jobId = randomUUID();
+    const artifact = { bucket: "analytics-model", path: buildAnalyticsObjectPath(workspaceId, projectId, "model", modelId, "model.json"), artifactKind: "model" as const };
+    const pending = await this.metadata.createModelTraining({ projectId, trainingDatasetVersionId: trainingVersion.id, modelFamily: reviewedRequest.candidateAlgorithms[0] as AnalyticsModelFamily, featureSet: { version: "analytics.feature-set.v1", target: "sales_units" }, artifact, jobId, modelId });
+    try {
+      const result = await this.worker.trainModel({
+        contractVersion: ANALYTICS_CONTRACT_VERSION, id: jobId, projectId, type: "TRAIN_MODEL", status: "queued", createdAt: new Date().toISOString(), inputArtifacts: [trainingVersion.storage],
+        trainingArtifact: trainingVersion.storage, modelArtifact: { ...artifact, contentType: "application/json" }, trainingRequest: reviewedRequest as unknown as Record<string, unknown>,
+      });
+      await this.metadata.markModelTrainingSucceeded({ projectId, modelId, jobId, trainingDatasetVersionId: trainingVersion.id, artifact: result.modelArtifact, modelFamily: result.modelFamily, featureSet: result.featureSet, metrics: result.metrics, dataFingerprint: result.dataFingerprint, isApproved: result.isApproved, evaluations: result.evaluations });
+      return { ...pending, artifact: result.modelArtifact, modelFamily: result.modelFamily, metrics: result.metrics, dataFingerprint: result.dataFingerprint, isApproved: result.isApproved, status: "succeeded" as const };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Model training worker failed.";
+      await this.metadata.markModelTrainingFailed(modelId, jobId, message);
+      throw error;
+    }
+  }
+
+  async listPredictionRuns(workspaceId: string, projectId: string): Promise<PredictionContract[]> {
+    await this.metadata.assertProjectInWorkspace(projectId, workspaceId);
+    return this.metadata.listPredictionRuns(projectId);
+  }
+
+  async predict(workspaceId: string, projectId: string, modelVersionId: string, input: PredictionInput): Promise<PredictionContract> {
+    await this.metadata.assertProjectInWorkspace(projectId, workspaceId);
+    const issues = validatePredictionRequest(input);
+    if (!input.historyDatasetVersionId || issues.length) throw new BadRequestException({ message: "Prediction validation failed.", issues: input.historyDatasetVersionId ? issues : [{ code: "invalid_prediction", message: "A processed history dataset version is required." }] });
+    const model = await this.metadata.getModelVersion(projectId, modelVersionId);
+    if (!model.isApproved) throw new BadRequestException("Approve a model version before requesting predictions.");
+    const history = await this.metadata.getProcessedDatasetVersion(projectId, input.historyDatasetVersionId);
+    const runId = randomUUID();
+    const scenarioId = randomUUID();
+    const jobId = randomUUID();
+    const artifact = { bucket: "analytics-prediction", path: buildAnalyticsObjectPath(workspaceId, projectId, "prediction", runId, "predictions.csv"), artifactKind: "prediction" as const };
+    const scenarioSummary = input.mode === "future_forecast" ? { mode: input.mode, rowCount: input.rows.length, horizonWeeks: 4 } : { mode: input.mode, customerId: input.customerId, productCount: input.productIds?.length ?? 0, weekCount: input.weekNums?.length ?? 0 };
+    const pending = await this.metadata.createPredictionRun({ projectId, modelVersionId, historyDatasetVersionId: history.id, mode: input.mode, scenarioSummary, predictionArtifact: artifact, jobId, scenarioId, runId });
+    try {
+      const result = await this.worker.predict({
+        contractVersion: ANALYTICS_CONTRACT_VERSION, id: jobId, projectId, type: "PREDICT", status: "queued", createdAt: new Date().toISOString(), inputArtifacts: [model.artifact, history.storage],
+        modelArtifact: model.artifact, historyArtifact: history.storage, predictionArtifact: { ...artifact, contentType: "text/csv" }, scenario: input as unknown as Record<string, unknown>,
+      });
+      await this.metadata.markPredictionSucceeded({ projectId, runId, scenarioId, jobId, historyDatasetVersionId: history.id, artifact: result.predictionArtifact, summary: result.summary });
+      return { ...pending, artifact: result.predictionArtifact, status: "succeeded", summary: result.summary };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Prediction worker failed.";
+      await this.metadata.markPredictionFailed(runId, jobId, message);
+      throw error;
+    }
   }
 
   async runPipeline(workspaceId: string, projectId: string, pipelineVersionId: string, sources: PipelineSourceBinding[], outputDatasetName?: string): Promise<AnalyticsPipelineRun> {

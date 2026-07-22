@@ -46,6 +46,16 @@ export const api = {
     request<Array<{ pipelineRunId: string; createdAt: string; report: { inputRowCount: number; outputRowCount: number; findings: Array<{ code: string; severity: string; column?: string; count?: number; message: string }> } }>>(`/analytics/projects/${projectId}/quality-reports`, { headers: analyticsHeaders() }),
   runAnalyticsPipeline: (projectId: string, pipelineVersionId: string, input: { sources: Array<{ sourceId: string; datasetVersionId: string }>; outputDatasetName?: string }) =>
     request<{ id: string; status: string }>(`/analytics/projects/${projectId}/pipelines/${pipelineVersionId}/runs`, { method: "POST", headers: analyticsHeaders(), body: JSON.stringify(input) }),
+  listAnalyticsModels: (projectId: string) =>
+    request<Array<{ id: string; trainingDatasetVersionId: string; modelFamily: string; status: string; isApproved: boolean; metrics: ModelMetrics; createdAt: string }>>(`/analytics/projects/${projectId}/models`, { headers: analyticsHeaders() }),
+  listAnalyticsModelEvaluations: (projectId: string) =>
+    request<Array<{ id: string; modelVersionId: string; algorithm: string; metrics: ModelMetrics; segmentErrors: Record<string, ModelMetrics>; selected: boolean; createdAt: string }>>(`/analytics/projects/${projectId}/model-evaluations`, { headers: analyticsHeaders() }),
+  trainAnalyticsModel: (projectId: string, input: AnalyticsTrainingRequest) =>
+    request<{ id: string; modelFamily: string; status: string; isApproved: boolean; metrics: ModelMetrics }>(`/analytics/projects/${projectId}/models`, { method: "POST", headers: analyticsHeaders(), body: JSON.stringify(input) }),
+  listAnalyticsPredictions: (projectId: string) =>
+    request<Array<{ id: string; modelVersionId: string; scenarioId: string; status: string; summary?: PredictionSummary; createdAt: string }>>(`/analytics/projects/${projectId}/predictions`, { headers: analyticsHeaders() }),
+  createAnalyticsPrediction: (projectId: string, modelVersionId: string, input: AnalyticsPredictionInput) =>
+    request<{ id: string; status: string; summary?: PredictionSummary }>(`/analytics/projects/${projectId}/models/${modelVersionId}/predictions`, { method: "POST", headers: analyticsHeaders(), body: JSON.stringify(input) }),
   generateFlow: (prompt: string, context?: string) =>
     request<GenerateFlowResponse>("/flows/generate", {
       method: "POST",
@@ -102,6 +112,22 @@ export type AnalyticsPipelineDefinition = {
   nodes: Array<{ id: string; type: string; inputIds: string[]; config: Record<string, unknown> }>;
   columnMappings: Array<{ sourceColumn: string; canonicalColumn: string; transformation?: "none" | "normalize_0_1" }>;
 };
+
+export type ModelMetrics = { wape: number; mae: number; rmse: number; r2: number; bias: number };
+export type AnalyticsTrainingRequest = {
+  contractVersion: "analytics.v1";
+  trainingDatasetVersionId: string;
+  target: "sales_units";
+  candidateAlgorithms: Array<"ridge_linear" | "poisson_glm" | "histogram_gradient_boosting">;
+  includeBaselineUnits?: boolean;
+  validationWeeks?: number;
+  thresholds?: { maxWape?: number };
+};
+export type ForecastRowInput = { productId: string; customerId: string; weekNum: string; consumerPrice: number; numStores: number; promotionIntensity: number; tactics?: Record<string, number | null> };
+export type AnalyticsPredictionInput =
+  | { mode: "historical_what_if"; historyDatasetVersionId: string; customerId: string; productIds?: string[]; weekNums?: string[]; promotionIntensity: number; tactics?: Record<string, number | null> }
+  | { mode: "future_forecast"; historyDatasetVersionId: string; rows: ForecastRowInput[] };
+export type PredictionSummary = { rowCount: number; totalBaselineUnits: number; totalPromotedUnits: number; totalIncrementalUnits: number; weightedPercentIncrement: number; qualityFlags: string[] };
 
 function analyticsHeaders(): HeadersInit {
   return { "x-workspace-id": process.env.NEXT_PUBLIC_ANALYTICS_WORKSPACE_ID ?? "default-workspace" };

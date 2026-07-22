@@ -1,5 +1,5 @@
 import { Injectable, ServiceUnavailableException, UnprocessableEntityException } from "@nestjs/common";
-import type { AnalyticsJob, CsvProfile, DataQualityReport, StorageObjectRef } from "@flowos/analytics-contracts";
+import type { AnalyticsJob, AnalyticsModelFamily, CsvProfile, DataQualityReport, ModelMetrics, PredictionOutputSummary, StorageObjectRef } from "@flowos/analytics-contracts";
 
 export type ProcessDatasetWorkerRequest = AnalyticsJob & {
   pipeline: Record<string, unknown>;
@@ -14,6 +14,39 @@ export type ProcessDatasetWorkerResult = {
   outputByteSize: number;
   outputProfile: CsvProfile;
   qualityReport: DataQualityReport;
+};
+
+export type TrainModelWorkerRequest = AnalyticsJob & {
+  trainingArtifact: StorageObjectRef;
+  modelArtifact: StorageObjectRef & { contentType: "application/json" };
+  trainingRequest: Record<string, unknown>;
+};
+
+export type TrainModelWorkerResult = {
+  id: string;
+  status: "succeeded";
+  modelArtifact: StorageObjectRef;
+  modelFamily: AnalyticsModelFamily;
+  metrics: ModelMetrics;
+  evaluations: Array<{ algorithm: AnalyticsModelFamily; metrics: ModelMetrics; segmentErrors: Record<string, ModelMetrics>; selected: boolean }>;
+  isApproved: boolean;
+  dataFingerprint: string;
+  featureSet: Record<string, unknown>;
+};
+
+export type PredictionWorkerRequest = AnalyticsJob & {
+  modelArtifact: StorageObjectRef;
+  historyArtifact: StorageObjectRef;
+  predictionArtifact: StorageObjectRef & { contentType: "text/csv" };
+  scenario: Record<string, unknown>;
+};
+
+export type PredictionWorkerResult = {
+  id: string;
+  status: "succeeded";
+  predictionArtifact: StorageObjectRef;
+  outputByteSize: number;
+  summary: PredictionOutputSummary;
 };
 
 @Injectable()
@@ -42,6 +75,18 @@ export class AnalyticsWorkerClient {
   }
 
   async processDataset(job: ProcessDatasetWorkerRequest): Promise<ProcessDatasetWorkerResult> {
+    return this.submitJob<ProcessDatasetWorkerResult>(job, "The pipeline could not process the selected dataset versions.");
+  }
+
+  async trainModel(job: TrainModelWorkerRequest): Promise<TrainModelWorkerResult> {
+    return this.submitJob<TrainModelWorkerResult>(job, "The selected dataset could not train a model.");
+  }
+
+  async predict(job: PredictionWorkerRequest): Promise<PredictionWorkerResult> {
+    return this.submitJob<PredictionWorkerResult>(job, "The requested prediction could not be created.");
+  }
+
+  private async submitJob<T>(job: AnalyticsJob, fallback: string): Promise<T> {
     if (!this.baseUrl) throw new ServiceUnavailableException("Analytics processing is unavailable: configure ANALYTICS_WORKER_URL.");
     let response: Response;
     try {
@@ -53,8 +98,8 @@ export class AnalyticsWorkerClient {
     } catch {
       throw new ServiceUnavailableException("Analytics processing worker is unavailable.");
     }
-    const payload = await response.json().catch(() => ({})) as ProcessDatasetWorkerResult & { error?: string };
-    if (!response.ok) throw new UnprocessableEntityException(payload.error ?? "The pipeline could not process the selected dataset versions.");
+    const payload = await response.json().catch(() => ({})) as T & { error?: string };
+    if (!response.ok) throw new UnprocessableEntityException(payload.error ?? fallback);
     return payload;
   }
 }
