@@ -12,6 +12,7 @@
     "@flowos/analytics-contracts": "workspace:*",
     "@flowos/analytics-fixtures": "workspace:*",
     "@flowos/types": "workspace:*",
+    "@supabase/supabase-js": "^2.110.7",
     "@xyflow/react": "^12.11.2",
     "next": "16.2.10",
     "react": "19.2.4",
