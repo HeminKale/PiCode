@@ -17,11 +17,18 @@ type WorkspaceAuthContextValue = {
   error: string | undefined;
   selectWorkspace: (workspaceId: string | undefined) => void;
   signIn: (email: string, password: string) => Promise<string | undefined>;
+  signUp: (email: string, password: string) => Promise<{ error?: string; message?: string }>;
+  requestPasswordReset: (email: string) => Promise<{ error?: string; message?: string }>;
+  updatePassword: (password: string) => Promise<string | undefined>;
   signOut: () => Promise<void>;
   retryWorkspaceLoad: () => Promise<void>;
 };
 
 const WorkspaceAuthContext = createContext<WorkspaceAuthContextValue | undefined>(undefined);
+
+function browserRedirect(path: string): string | undefined {
+  return typeof window === "undefined" ? undefined : new URL(path, window.location.origin).toString();
+}
 
 function sortMemberships(rows: AnalyticsWorkspaceMembership[]): AnalyticsWorkspaceMembership[] {
   return [...rows].sort((left, right) => left.workspaceId.localeCompare(right.workspaceId));
@@ -117,6 +124,32 @@ export function WorkspaceAuthProvider({ children }: { children: React.ReactNode 
     return signInError?.message;
   }, []);
 
+  const signUp = useCallback(async (email: string, password: string) => {
+    const client = getSupabaseBrowserClient();
+    if (!client) return { error: supabaseBrowserConfigurationError() ?? "Supabase browser authentication is unavailable." };
+    setError(undefined);
+    const { data, error: signUpError } = await client.auth.signUp({
+      email: email.trim(), password,
+      options: { emailRedirectTo: browserRedirect("/sign-in") },
+    });
+    if (signUpError) return { error: signUpError.message };
+    return { message: data.session ? "Account created and signed in." : "Account created. Check your email to confirm the address, then sign in." };
+  }, []);
+
+  const requestPasswordReset = useCallback(async (email: string) => {
+    const client = getSupabaseBrowserClient();
+    if (!client) return { error: supabaseBrowserConfigurationError() ?? "Supabase browser authentication is unavailable." };
+    const { error: resetError } = await client.auth.resetPasswordForEmail(email.trim(), { redirectTo: browserRedirect("/reset-password") });
+    return resetError ? { error: resetError.message } : { message: "If that account can receive recovery email, a password-reset link has been sent." };
+  }, []);
+
+  const updatePassword = useCallback(async (password: string) => {
+    const client = getSupabaseBrowserClient();
+    if (!client) return supabaseBrowserConfigurationError() ?? "Supabase browser authentication is unavailable.";
+    const { error: updateError } = await client.auth.updateUser({ password });
+    return updateError?.message;
+  }, []);
+
   const signOut = useCallback(async () => {
     const client = getSupabaseBrowserClient();
     setAnalyticsAuthContext(undefined);
@@ -130,9 +163,9 @@ export function WorkspaceAuthProvider({ children }: { children: React.ReactNode 
 
   const value = useMemo<WorkspaceAuthContextValue>(() => ({
     status, session, memberships, selectedWorkspaceId, error,
-    selectWorkspace, signIn, signOut,
+    selectWorkspace, signIn, signUp, requestPasswordReset, updatePassword, signOut,
     retryWorkspaceLoad: async () => { await loadMemberships(session); },
-  }), [error, loadMemberships, memberships, selectedWorkspaceId, session, signIn, signOut, status, selectWorkspace]);
+  }), [error, loadMemberships, memberships, selectedWorkspaceId, session, signIn, signUp, requestPasswordReset, updatePassword, signOut, status, selectWorkspace]);
 
   return <WorkspaceAuthContext.Provider value={value}>{children}</WorkspaceAuthContext.Provider>;
 }
