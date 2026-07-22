@@ -2,6 +2,14 @@ import type { Flow, GenerateFlowResponse, FlowRun } from "@flowos/types";
 import type { AnalyticsPredictionSummaryView, AnalyticsResultReference } from "@flowos/analytics-contracts";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+let analyticsAuthContext: { workspaceId: string; accessToken: string } | undefined;
+
+/** Called by the product's authenticated workspace provider; never use a service-role key. */
+export function setAnalyticsAuthContext(context: { workspaceId: string; accessToken: string } | undefined): void {
+  analyticsAuthContext = context && context.workspaceId.trim() && context.accessToken.trim()
+    ? { workspaceId: context.workspaceId.trim(), accessToken: context.accessToken.trim() }
+    : undefined;
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
@@ -53,12 +61,22 @@ export const api = {
     request<Array<{ id: string; modelVersionId: string; algorithm: string; metrics: ModelMetrics; segmentErrors: Record<string, ModelMetrics>; selected: boolean; createdAt: string }>>(`/analytics/projects/${projectId}/model-evaluations`, { headers: analyticsHeaders() }),
   trainAnalyticsModel: (projectId: string, input: AnalyticsTrainingRequest) =>
     request<{ id: string; modelFamily: string; status: string; isApproved: boolean; metrics: ModelMetrics }>(`/analytics/projects/${projectId}/models`, { method: "POST", headers: analyticsHeaders(), body: JSON.stringify(input) }),
+  approveAnalyticsModel: (projectId: string, modelVersionId: string) =>
+    request<{ id: string; isApproved: boolean }>(`/analytics/projects/${projectId}/models/${modelVersionId}/approval`, { method: "POST", headers: analyticsHeaders() }),
   listAnalyticsPredictions: (projectId: string) =>
     request<Array<{ id: string; modelVersionId: string; scenarioId: string; status: string; summary?: PredictionSummary; createdAt: string }>>(`/analytics/projects/${projectId}/predictions`, { headers: analyticsHeaders() }),
   createAnalyticsPrediction: (projectId: string, modelVersionId: string, input: AnalyticsPredictionInput) =>
     request<{ id: string; status: string; summary?: PredictionSummary }>(`/analytics/projects/${projectId}/models/${modelVersionId}/predictions`, { method: "POST", headers: analyticsHeaders(), body: JSON.stringify(input) }),
   listAnalyticsAuditEvents: (projectId: string) =>
     request<Array<{ id: string; action: string; resourceType: string; resourceId?: string; details: Record<string, unknown>; createdAt: string }>>(`/analytics/projects/${projectId}/audit-events`, { headers: analyticsHeaders() }),
+  listAnalyticsRetention: (projectId: string) =>
+    request<Array<{ artifactKind: string; retentionDays: number; updatedAt: string }>>(`/analytics/projects/${projectId}/retention`, { headers: analyticsHeaders() }),
+  updateAnalyticsRetention: (projectId: string, artifactKind: "raw" | "processed" | "model" | "prediction", retentionDays: number) =>
+    request<{ artifactKind: string; retentionDays: number }>(`/analytics/projects/${projectId}/retention`, { method: "PATCH", headers: analyticsHeaders(), body: JSON.stringify({ artifactKind, retentionDays }) }),
+  listAnalyticsOperations: (projectId: string) =>
+    request<Array<{ id: string; jobType: string; status: string; attemptCount: number; maxAttempts: number; errorSummary?: string; createdAt: string }>>(`/analytics/projects/${projectId}/operations`, { headers: analyticsHeaders() }),
+  listAnalyticsDriftReports: (projectId: string) =>
+    request<Array<{ id: string; modelVersionId: string; datasetVersionId: string; status: string; createdAt: string; report: Record<string, unknown> }>>(`/analytics/projects/${projectId}/drift-reports`, { headers: analyticsHeaders() }),
   resolveAnalyticsResultReference: (reference: AnalyticsResultReference) =>
     request<AnalyticsPredictionSummaryView>("/analytics/result-references/resolve", { method: "POST", headers: analyticsHeaders(), body: JSON.stringify(reference) }),
   generateFlow: (prompt: string, context?: string) =>
@@ -135,7 +153,9 @@ export type AnalyticsPredictionInput =
 export type PredictionSummary = { rowCount: number; totalBaselineUnits: number; totalPromotedUnits: number; totalIncrementalUnits: number; weightedPercentIncrement: number; qualityFlags: string[]; displayRows?: Array<{ productId: string; customerId: string; weekNum: string; baselineUnits: number; promotedUnits: number; incrementalUnits: number; percentIncrement: number }> };
 
 function analyticsHeaders(): HeadersInit {
-  return { "x-workspace-id": process.env.NEXT_PUBLIC_ANALYTICS_WORKSPACE_ID ?? "default-workspace" };
+  // Workspace is a selector only; the API verifies bearer identity and membership.
+  // Never provide a default workspace or browser-exposed service token.
+  return analyticsAuthContext ? { "x-workspace-id": analyticsAuthContext.workspaceId, Authorization: `Bearer ${analyticsAuthContext.accessToken}` } : {};
 }
 
 export { API_URL };

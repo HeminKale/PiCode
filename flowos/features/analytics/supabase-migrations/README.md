@@ -14,6 +14,7 @@ Use zero-padded, immutable names:
 004_analytics_processed_dataset_versions.sql
 005_analytics_models_and_predictions.sql
 006_analytics_audit_and_retention.sql
+007_analytics_rbac_operations_and_drift.sql
 ```
 
 Never alter an applied file. Add the next sequence number for any correction. Every SQL
@@ -37,3 +38,10 @@ Sprint A4 adds `006_analytics_audit_and_retention.sql`. It is awaiting the proje
 owner's manual review/application. It adds project-scoped audit events, retention
 metadata, and cleanup schedule metadata only; it does not delete objects, create a
 worker schedule, change Storage policies, or alter the Prisma workaround.
+
+Sprint A5 adds `007_analytics_rbac_operations_and_drift.sql`, which must be reviewed
+and applied only after `006`. It adds active workspace/project membership records,
+actor-linked audit events, private-bucket/RLS policies, job retry/dead-letter metadata,
+and metadata-only drift baselines. It does not delete Storage objects or deploy a
+cleanup, queue, or remote worker. Backfill at least one active `owner`/`admin` workspace
+membership for each existing workspace before sending authenticated traffic.
