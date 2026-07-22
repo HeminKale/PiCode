@@ -1,0 +1,8 @@
+[project]
+name = "flowos-analytics-worker"
+version = "0.1.0"
+requires-python = ">=3.11"
+description = "Fixed-code, resource-limited Analytics worker for FlowOS"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
