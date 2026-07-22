@@ -2,11 +2,18 @@ import type { Flow, GenerateFlowResponse, FlowRun } from "@flowos/types";
 import type { AnalyticsPredictionSummaryView, AnalyticsResultReference } from "@flowos/analytics-contracts";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
-let analyticsAuthContext: { workspaceId: string; accessToken: string } | undefined;
+type AnalyticsAuthContext = { workspaceId: string; accessToken: string };
+type AnalyticsAuthGlobal = typeof globalThis & { __flowosAnalyticsAuthContext?: AnalyticsAuthContext };
+
+function analyticsAuthGlobal(): AnalyticsAuthGlobal {
+  return globalThis as AnalyticsAuthGlobal;
+}
 
 /** Called by the product's authenticated workspace provider; never use a service-role key. */
 export function setAnalyticsAuthContext(context: { workspaceId: string; accessToken: string } | undefined): void {
-  analyticsAuthContext = context && context.workspaceId.trim() && context.accessToken.trim()
+  // Next can evaluate client modules in separate route bundles. Store this browser-only
+  // request context on globalThis so every Analytics API import observes the same value.
+  analyticsAuthGlobal().__flowosAnalyticsAuthContext = context && context.workspaceId.trim() && context.accessToken.trim()
     ? { workspaceId: context.workspaceId.trim(), accessToken: context.accessToken.trim() }
     : undefined;
 }
@@ -155,7 +162,8 @@ export type PredictionSummary = { rowCount: number; totalBaselineUnits: number; 
 function analyticsHeaders(): HeadersInit {
   // Workspace is a selector only; the API verifies bearer identity and membership.
   // Never provide a default workspace or browser-exposed service token.
-  return analyticsAuthContext ? { "x-workspace-id": analyticsAuthContext.workspaceId, Authorization: `Bearer ${analyticsAuthContext.accessToken}` } : {};
+  const context = analyticsAuthGlobal().__flowosAnalyticsAuthContext;
+  return context ? { "x-workspace-id": context.workspaceId, Authorization: `Bearer ${context.accessToken}` } : {};
 }
 
 export { API_URL };
