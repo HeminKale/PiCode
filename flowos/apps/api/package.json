@@ -21,6 +21,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@flowos/analytics-contracts": "workspace:*",
     "@anthropic-ai/sdk": "^0.112.3",
     "@flowos/types": "workspace:*",
     "@google/genai": "^2.12.0",

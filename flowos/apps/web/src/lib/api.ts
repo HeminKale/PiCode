@@ -15,6 +15,37 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  listAnalyticsProjects: () =>
+    request<Array<{ id: string; workspaceId: string; name: string; description?: string | null; createdAt: string; updatedAt: string }>>("/analytics/projects", { headers: analyticsHeaders() }),
+  createAnalyticsProject: (name: string, description?: string) =>
+    request<{ id: string; workspaceId: string; name: string; description?: string | null; createdAt: string; updatedAt: string }>("/analytics/projects", {
+      method: "POST", headers: analyticsHeaders(), body: JSON.stringify({ name, description }),
+    }),
+  uploadAnalyticsDataset: async (projectId: string, datasetName: string, file: File) => {
+    const form = new FormData();
+    form.set("datasetName", datasetName);
+    form.set("file", file);
+    const response = await fetch(`${API_URL}/analytics/projects/${projectId}/datasets`, { method: "POST", headers: analyticsHeaders(), body: form });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`CSV upload failed (${response.status}): ${body}`);
+    }
+    return response.json() as Promise<{
+      id: string; fileName: string; byteSize: number; status: "profiled"; profile: { dataRowCount: number; columns: Array<{ name: string; inferredType: string; nullCount: number }> };
+    }>;
+  },
+  listAnalyticsDatasetVersions: (projectId: string) =>
+    request<Array<{ id: string; datasetId: string; fileName: string; status: "profiled" | "processed"; profile?: { dataRowCount: number; columns: Array<{ name: string }> } }>>(`/analytics/projects/${projectId}/dataset-versions`, { headers: analyticsHeaders() }),
+  listAnalyticsPipelines: (projectId: string) =>
+    request<Array<{ id: string; templateId: string; version: number; isApproved: boolean; definition: AnalyticsPipelineDefinition }>>(`/analytics/projects/${projectId}/pipelines`, { headers: analyticsHeaders() }),
+  createAnalyticsPipeline: (projectId: string, input: { name: string; description?: string; definition: AnalyticsPipelineDefinition; isApproved: boolean }) =>
+    request<{ id: string; version: number; isApproved: boolean; definition: AnalyticsPipelineDefinition }>(`/analytics/projects/${projectId}/pipelines`, { method: "POST", headers: analyticsHeaders(), body: JSON.stringify(input) }),
+  listAnalyticsPipelineRuns: (projectId: string) =>
+    request<Array<{ id: string; status: string; outputDatasetVersionId?: string | null; errorSummary?: string | null; createdAt: string }>>(`/analytics/projects/${projectId}/pipeline-runs`, { headers: analyticsHeaders() }),
+  listAnalyticsQualityReports: (projectId: string) =>
+    request<Array<{ pipelineRunId: string; createdAt: string; report: { inputRowCount: number; outputRowCount: number; findings: Array<{ code: string; severity: string; column?: string; count?: number; message: string }> } }>>(`/analytics/projects/${projectId}/quality-reports`, { headers: analyticsHeaders() }),
+  runAnalyticsPipeline: (projectId: string, pipelineVersionId: string, input: { sources: Array<{ sourceId: string; datasetVersionId: string }>; outputDatasetName?: string }) =>
+    request<{ id: string; status: string }>(`/analytics/projects/${projectId}/pipelines/${pipelineVersionId}/runs`, { method: "POST", headers: analyticsHeaders(), body: JSON.stringify(input) }),
   generateFlow: (prompt: string, context?: string) =>
     request<GenerateFlowResponse>("/flows/generate", {
       method: "POST",
@@ -62,5 +93,18 @@ export const api = {
   publishArtifact: (flowId: string, artifactId: string) => request<{ id: string; version: number; isPublished: boolean }>(`/flows/${flowId}/artifacts/${artifactId}/publish`, { method: "POST" }),
   publishedArtifact: (flowId: string, nodeId: string) => request<{ id: string; sourceCode: string; version: number } | null>(`/flows/${flowId}/artifacts/node/${nodeId}/published`),
 };
+
+export type AnalyticsPipelineDefinition = {
+  contractVersion: "analytics.v1";
+  id: string;
+  projectId: string;
+  version: number;
+  nodes: Array<{ id: string; type: string; inputIds: string[]; config: Record<string, unknown> }>;
+  columnMappings: Array<{ sourceColumn: string; canonicalColumn: string; transformation?: "none" | "normalize_0_1" }>;
+};
+
+function analyticsHeaders(): HeadersInit {
+  return { "x-workspace-id": process.env.NEXT_PUBLIC_ANALYTICS_WORKSPACE_ID ?? "default-workspace" };
+}
 
 export { API_URL };

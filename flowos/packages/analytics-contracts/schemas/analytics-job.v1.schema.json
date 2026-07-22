@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowos.dev/contracts/analytics-job.v1.schema.json",
+  "title": "Analytics job v1",
+  "type": "object",
+  "required": ["contractVersion", "id", "projectId", "type", "status", "inputArtifacts", "createdAt"],
+  "properties": {
+    "contractVersion": { "const": "analytics.v1" },
+    "id": { "type": "string", "minLength": 1 },
+    "projectId": { "type": "string", "minLength": 1 },
+    "type": { "enum": ["PROFILE_DATASET", "PROCESS_DATASET", "TRAIN_MODEL", "PREDICT"] },
+    "status": { "enum": ["queued", "running", "succeeded", "failed", "cancelled"] },
+    "inputArtifacts": { "type": "array", "items": { "$ref": "#/$defs/storageObject" } },
+    "createdAt": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "storageObject": {
+      "type": "object",
+      "required": ["bucket", "path", "artifactKind"],
+      "properties": {
+        "bucket": { "type": "string" },
+        "path": { "type": "string" },
+        "artifactKind": { "enum": ["raw", "processed", "model", "prediction"] },
+        "sha256": { "type": "string" }
+      }
+    }
+  }
+}
